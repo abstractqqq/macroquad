@@ -10,10 +10,7 @@ use crate::{
     Error,
 };
 
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 pub struct StyleBuilder {
     atlas: Arc<Mutex<Atlas>>,
@@ -63,7 +60,6 @@ impl StyleBuilder {
     pub fn with_font(self, font: &Font) -> Result<StyleBuilder, Error> {
         let mut font = font.clone();
         font.set_atlas(self.atlas.clone());
-        font.set_characters(Arc::new(Mutex::new(HashMap::new())));
         Ok(StyleBuilder {
             font: Arc::new(Mutex::new(font)),
             ..self

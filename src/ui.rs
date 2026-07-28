@@ -73,7 +73,7 @@ use crate::{
     ui::{canvas::DrawCanvas, render::Painter},
 };
 
-use std::collections::HashMap;
+use foldhash::HashMap;
 mod cursor;
 mod input;
 mod key_repeat;

@@ -12,4 +12,5 @@ Tiled editor macroquad intergration
 
 [dependencies]
 nanoserde = "0.1"
+foldhash = "0.2"
 macroquad = { path = "../", version = "0.4.0" }

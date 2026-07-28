@@ -1,6 +1,6 @@
 use crate::{get_context, get_quad_context, math::Rect, texture::Image, Color};
 
-use std::collections::HashMap;
+use foldhash::{HashMap, HashMapExt};
 
 #[derive(Debug, Clone, Copy)]
 pub struct Sprite {

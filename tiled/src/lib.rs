@@ -2,7 +2,7 @@ use nanoserde::DeJson;
 
 use macroquad::prelude::*;
 
-use std::collections::HashMap;
+use foldhash::{HashMap, HashMapExt};
 
 mod error;
 mod tiled;

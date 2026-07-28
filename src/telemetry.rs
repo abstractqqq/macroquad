@@ -1,6 +1,6 @@
 use crate::{get_context, get_quad_context, time::get_time};
 
-use std::collections::HashMap;
+use foldhash::{HashMap, HashMapExt};
 
 static mut PROFILER: Option<Profiler> = None;
 

@@ -38,7 +38,8 @@
 
 use miniquad::*;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use foldhash::{HashMap, HashMapExt};
+use std::collections::{HashSet, VecDeque};
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
@@ -55,6 +56,8 @@ pub mod input;
 pub mod material;
 pub mod math;
 pub mod models;
+#[cfg(feature = "rich-text")]
+pub mod rich_text;
 pub mod shapes;
 pub mod text;
 pub mod texture;

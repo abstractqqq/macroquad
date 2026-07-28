@@ -333,7 +333,7 @@ struct Scene {
     current_time: f64,
     in_fixed_update: bool,
 
-    any_map: std::collections::HashMap<std::any::TypeId, Vec<(HandleUntyped, *mut u8)>>,
+    any_map: foldhash::HashMap<std::any::TypeId, Vec<(HandleUntyped, *mut u8)>>,
     free_nodes: Vec<Cell>,
 }
 
@@ -350,7 +350,7 @@ impl Scene {
             acc: 0.0,
             current_time: crate::time::get_time(),
             in_fixed_update: false,
-            any_map: std::collections::HashMap::new(),
+            any_map: foldhash::HashMap::default(),
         }
     }
 
