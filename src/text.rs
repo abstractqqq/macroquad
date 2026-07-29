@@ -1,6 +1,6 @@
 //! Functions to load immutable fonts, warm text resources, and draw shaped text.
 
-use std::sync::Arc;
+use std::{ops::Range, sync::Arc};
 
 use swash::FontRef;
 
@@ -143,6 +143,185 @@ impl Default for TextParams<'_> {
             color: WHITE,
         }
     }
+}
+
+/// Parameters used to shape a reusable [`TextLayout`].
+#[derive(Debug, Clone)]
+pub struct TextLayoutParams<'a> {
+    pub font: Option<&'a Font>,
+    pub font_size: u16,
+    pub font_scale: f32,
+    pub font_scale_aspect: f32,
+    /// Maximum rendered width. `None` disables automatic wrapping.
+    pub max_width: Option<f32>,
+}
+
+impl Default for TextLayoutParams<'_> {
+    fn default() -> Self {
+        Self {
+            font: None,
+            font_size: 20,
+            font_scale: 1.0,
+            font_scale_aspect: 1.0,
+            max_width: None,
+        }
+    }
+}
+
+/// A color override for a UTF-8 byte range in prepared text.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextColorSpan {
+    pub range: Range<usize>,
+    pub color: Color,
+}
+
+/// Draw-time parameters for a reusable [`TextLayout`].
+#[derive(Debug, Clone)]
+pub struct TextLayoutDrawParams {
+    pub rotation: f32,
+    pub color: Color,
+    /// Number of complete shaping clusters to reveal.
+    pub visible_clusters: Option<usize>,
+}
+
+impl Default for TextLayoutDrawParams {
+    fn default() -> Self {
+        Self {
+            rotation: 0.0,
+            color: WHITE,
+            visible_clusters: None,
+        }
+    }
+}
+
+/// Shaped and positioned text that can be drawn repeatedly without layout work.
+#[derive(Clone)]
+pub struct TextLayout {
+    font: Font,
+    shaped: Arc<renderer::ShapedText>,
+    cluster_colors: Vec<Option<Color>>,
+    dimensions: TextDimensions,
+    font_size: f32,
+    scale_x: f32,
+    scale_y: f32,
+}
+
+impl std::fmt::Debug for TextLayout {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("TextLayout")
+            .field("font", &self.font)
+            .field("dimensions", &self.dimensions)
+            .field("clusters", &self.cluster_count())
+            .finish()
+    }
+}
+
+impl TextLayout {
+    pub fn dimensions(&self) -> TextDimensions {
+        self.dimensions
+    }
+
+    pub fn cluster_count(&self) -> usize {
+        self.shaped.clusters.len()
+    }
+
+    /// Returns the UTF-8 byte range represented by a reveal cluster.
+    pub fn cluster_range(&self, index: usize) -> Option<Range<usize>> {
+        self.shaped
+            .clusters
+            .get(index)
+            .map(|cluster| cluster.source.clone())
+    }
+}
+
+/// Shapes text once for repeated measurement and drawing.
+///
+/// Color spans do not affect shaping. When spans overlap, the last matching
+/// span wins.
+pub fn prepare_text_layout(
+    text: impl AsRef<str>,
+    params: TextLayoutParams<'_>,
+    color_spans: &[TextColorSpan],
+) -> TextLayout {
+    let text = text.as_ref();
+    let context = get_context();
+    let font = params
+        .font
+        .cloned()
+        .unwrap_or_else(|| context.fonts_storage.default_font.clone());
+    let scale_x = params.font_scale * params.font_scale_aspect;
+    let scale_y = params.font_scale;
+    let base_scale = params.font_size as f32 / renderer::BASE_FONT_SIZE;
+    let max_width = params.max_width.map(|width| width / (base_scale * scale_x));
+    let shaped = context.text_renderer.shape(&font, text, max_width);
+    let cluster_colors = shaped
+        .clusters
+        .iter()
+        .map(|cluster| {
+            color_spans
+                .iter()
+                .rev()
+                .find(|span| {
+                    span.range.start < cluster.source.end && cluster.source.start < span.range.end
+                })
+                .map(|span| span.color)
+        })
+        .collect();
+    let dimensions = TextDimensions {
+        width: shaped.dimensions.width * base_scale * scale_x,
+        height: shaped.dimensions.height * base_scale * scale_y,
+        offset_y: shaped.dimensions.offset_y * base_scale * scale_y,
+    };
+    TextLayout {
+        font,
+        shaped,
+        cluster_colors,
+        dimensions,
+        font_size: params.font_size as f32,
+        scale_x,
+        scale_y,
+    }
+}
+
+/// Draws all clusters in a prepared layout.
+pub fn draw_text_layout(layout: &TextLayout, x: f32, y: f32, color: Color) -> TextDimensions {
+    draw_text_layout_ex(
+        layout,
+        x,
+        y,
+        TextLayoutDrawParams {
+            color,
+            ..Default::default()
+        },
+    )
+}
+
+/// Draws a prepared layout, optionally limiting it to a typewriter prefix.
+pub fn draw_text_layout_ex(
+    layout: &TextLayout,
+    x: f32,
+    y: f32,
+    params: TextLayoutDrawParams,
+) -> TextDimensions {
+    let context = get_context();
+    context.text_renderer.draw_shaped(
+        &layout.font,
+        &layout.shaped,
+        x,
+        y,
+        layout.font_size,
+        layout.scale_x,
+        layout.scale_y,
+        params.rotation,
+        params.color,
+        Some(&layout.cluster_colors),
+        params
+            .visible_clusters
+            .unwrap_or_else(|| layout.cluster_count()),
+        &mut context.gl,
+        &mut *context.quad_context,
+    )
 }
 
 pub async fn load_ttf_font(path: &str) -> Result<Font, Error> {
