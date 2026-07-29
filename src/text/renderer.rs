@@ -1,11 +1,6 @@
-use std::{
-    collections::{hash_map::DefaultHasher, VecDeque},
-    hash::{Hash, Hasher},
-    ops::Range,
-    sync::Arc,
-};
+use std::{collections::VecDeque, hash::BuildHasher, ops::Range, sync::Arc};
 
-use foldhash::{HashMap, HashMapExt};
+use foldhash::{fast::RandomState, HashMap, HashMapExt};
 use swash::{
     shape::ShapeContext,
     text::{Codepoint, Script},
@@ -74,6 +69,7 @@ struct LayoutEntry {
 struct LayoutCache {
     entries: HashMap<LayoutHash, Vec<LayoutEntry>>,
     insertion_order: VecDeque<(LayoutHash, Arc<str>)>,
+    hash_state: RandomState,
     len: usize,
 }
 
@@ -84,20 +80,19 @@ impl LayoutCache {
         Self {
             entries: HashMap::new(),
             insertion_order: VecDeque::new(),
+            hash_state: RandomState::default(),
             len: 0,
         }
     }
 
-    fn text_hash(text: &str) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        text.hash(&mut hasher);
-        hasher.finish()
+    fn text_hash(&self, text: &str) -> u64 {
+        self.hash_state.hash_one(text)
     }
 
     fn get(&self, font: FontId, text: &str, max_width: Option<f32>) -> Option<Arc<ShapedText>> {
         let key = LayoutHash {
             font,
-            text: Self::text_hash(text),
+            text: self.text_hash(text),
             max_width_bits: max_width.map(f32::to_bits),
         };
         self.entries.get(&key).and_then(|bucket| {
@@ -117,7 +112,7 @@ impl LayoutCache {
     ) {
         let key = LayoutHash {
             font,
-            text: Self::text_hash(text),
+            text: self.text_hash(text),
             max_width_bits: max_width.map(f32::to_bits),
         };
         if self

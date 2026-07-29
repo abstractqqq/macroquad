@@ -1,13 +1,8 @@
 //! Optional Parley rich-text layout backed by the default Swash rasterizer.
 
-use std::{
-    collections::{hash_map::DefaultHasher, VecDeque},
-    hash::{Hash, Hasher},
-    ops::Range,
-    sync::Arc,
-};
+use std::{collections::VecDeque, hash::BuildHasher, ops::Range, sync::Arc};
 
-use foldhash::{HashMap, HashMapExt};
+use foldhash::{fast::RandomState, HashMap, HashMapExt};
 use parley::{
     fontique::{Blob, Collection, CollectionOptions, FontInfoOverride, SourceCache},
     FontContext, FontFamily, LayoutContext, PositionedLayoutItem, StyleProperty,
@@ -126,6 +121,7 @@ struct LayoutEntry {
 struct LayoutCache {
     entries: HashMap<LayoutKey, Vec<LayoutEntry>>,
     order: VecDeque<(LayoutKey, Arc<str>)>,
+    hash_state: RandomState,
     len: usize,
 }
 
@@ -136,23 +132,22 @@ impl LayoutCache {
         Self {
             entries: HashMap::new(),
             order: VecDeque::new(),
+            hash_state: RandomState::default(),
             len: 0,
         }
     }
 
-    fn key(font: FontId, text: &str, max_width: Option<f32>) -> LayoutKey {
-        let mut hasher = DefaultHasher::new();
-        text.hash(&mut hasher);
+    fn key(&self, font: FontId, text: &str, max_width: Option<f32>) -> LayoutKey {
         LayoutKey {
             font,
-            text_hash: hasher.finish(),
+            text_hash: self.hash_state.hash_one(text),
             max_width_bits: max_width.map(f32::to_bits),
         }
     }
 
     fn get(&self, font: FontId, text: &str, max_width: Option<f32>) -> Option<Arc<ShapedText>> {
         self.entries
-            .get(&Self::key(font, text, max_width))
+            .get(&self.key(font, text, max_width))
             .and_then(|bucket| {
                 bucket
                     .iter()
@@ -168,7 +163,7 @@ impl LayoutCache {
         max_width: Option<f32>,
         shaped: Arc<ShapedText>,
     ) {
-        let key = Self::key(font, text, max_width);
+        let key = self.key(font, text, max_width);
         if self
             .entries
             .get(&key)
