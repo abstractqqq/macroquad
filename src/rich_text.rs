@@ -11,6 +11,7 @@ use parley::{
     fontique::{Blob, Collection, CollectionOptions, FontInfoOverride, SourceCache},
     FontContext, FontFamily, LayoutContext, PositionedLayoutItem, StyleProperty,
 };
+use swash::FontRef;
 
 use crate::{
     color::{Color, WHITE},
@@ -95,9 +96,8 @@ impl ShapeCache {
 struct GlyphCacheKey {
     font_data_id: u64,
     font_index: u32,
-    glyph_id: u32,
+    glyph_id: u16,
     pixel_size: u16,
-    normalized_coords: Vec<i16>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -110,11 +110,10 @@ struct GlyphInfo {
 #[derive(Clone)]
 struct PositionedGlyph {
     font: parley::FontData,
-    glyph_id: u32,
+    glyph_id: u16,
     x: f32,
     y: f32,
     size: f32,
-    normalized_coords: Vec<i16>,
 }
 
 struct ShapedText {
@@ -134,6 +133,13 @@ impl std::fmt::Debug for Font {
 
 impl Font {
     pub fn load_from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        let font = FontRef::from_index(bytes, 0).ok_or(Error::FontError(
+            "Swash could not parse the supplied font data",
+        ))?;
+        if font.variations().len() != 0 {
+            return Err(Error::FontError("Variable fonts are not supported"));
+        }
+
         let blob = Blob::new(Arc::new(bytes.to_vec()));
         let mut collection = Collection::new(CollectionOptions {
             shared: false,
@@ -236,14 +242,12 @@ impl Font {
                 if let PositionedLayoutItem::GlyphRun(run) = item {
                     let font = run.run().font().clone();
                     let size = run.run().font_size();
-                    let normalized_coords = run.run().normalized_coords().to_vec();
                     glyphs.extend(run.positioned_glyphs().map(|glyph| PositionedGlyph {
                         font: font.clone(),
-                        glyph_id: glyph.id,
+                        glyph_id: glyph.id as u16,
                         x: glyph.x,
                         y: glyph.y - first_baseline,
                         size,
-                        normalized_coords: normalized_coords.clone(),
                     }));
                 }
             }
@@ -267,7 +271,6 @@ impl Font {
             font_index: glyph.font.index,
             glyph_id: glyph.glyph_id,
             pixel_size: glyph.size.ceil() as u16,
-            normalized_coords: glyph.normalized_coords.clone(),
         };
         if let Some(info) = self.inner.glyphs.lock().unwrap().get(&key).copied() {
             return info;
@@ -277,7 +280,6 @@ impl Font {
             &glyph.font,
             glyph.glyph_id,
             glyph.size,
-            &glyph.normalized_coords,
         );
         let info = if let Some(rendered) = rendered {
             let sprite = if rendered.image.width == 0 || rendered.image.height == 0 {

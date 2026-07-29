@@ -90,9 +90,8 @@ impl ShapeCache {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct GlyphCacheKey {
-    glyph_id: u32,
+    glyph_id: u16,
     pixel_size: u16,
-    normalized_coords: Vec<i16>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -112,11 +111,10 @@ pub(crate) struct CharacterInfo {
 
 #[derive(Clone)]
 struct PositionedGlyph {
-    glyph_id: u32,
+    glyph_id: u16,
     x: f32,
     y: f32,
     size: f32,
-    normalized_coords: Vec<i16>,
 }
 
 struct ShapedText {
@@ -135,10 +133,11 @@ impl std::fmt::Debug for Font {
 
 impl Font {
     pub(crate) fn load_from_bytes(atlas: Arc<Mutex<Atlas>>, bytes: &[u8]) -> Result<Self, Error> {
-        if FontRef::from_index(bytes, 0).is_none() {
-            return Err(Error::FontError(
-                "Swash could not parse the supplied font data",
-            ));
+        let font = FontRef::from_index(bytes, 0).ok_or(Error::FontError(
+            "Swash could not parse the supplied font data",
+        ))?;
+        if font.variations().len() != 0 {
+            return Err(Error::FontError("Variable fonts are not supported"));
         }
 
         Ok(Self {
@@ -305,11 +304,10 @@ impl Font {
             shaper.shape_with(|cluster| {
                 for glyph in cluster.glyphs {
                     glyphs.push(PositionedGlyph {
-                        glyph_id: glyph.id as u32,
+                        glyph_id: glyph.id,
                         x: pen_x + glyph.x,
                         y: baseline_y + glyph.y,
                         size: pixel_size,
-                        normalized_coords: Vec::new(),
                     });
                     pen_x += glyph.advance;
                 }
@@ -334,7 +332,6 @@ impl Font {
         let key = GlyphCacheKey {
             glyph_id: glyph.glyph_id,
             pixel_size: glyph.size.ceil() as u16,
-            normalized_coords: glyph.normalized_coords.clone(),
         };
         if let Some(info) = self.inner.glyphs.lock().unwrap().get(&key).copied() {
             return info;
@@ -345,7 +342,6 @@ impl Font {
             self.inner.font_index,
             glyph.glyph_id,
             glyph.size,
-            &glyph.normalized_coords,
         );
         let info = if let Some(rendered) = rendered {
             let sprite = if rendered.image.width == 0 || rendered.image.height == 0 {
