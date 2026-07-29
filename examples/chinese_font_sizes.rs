@@ -30,6 +30,15 @@ async fn main() {
         },
         &[],
     );
+    let layout_32 = prepare_text_layout(
+        SAMPLE,
+        TextLayoutParams {
+            font: Some(&font),
+            font_size: 32,
+            ..Default::default()
+        },
+        &[],
+    );
     let layout_48 = prepare_text_layout(
         SAMPLE,
         TextLayoutParams {
@@ -51,8 +60,11 @@ async fn main() {
         draw_text("24 px", 32.0, 150.0, 20.0, SKYBLUE);
         draw_text_layout(&layout_24, 120.0, 150.0, WHITE);
 
-        draw_text("48 px", 32.0, 240.0, 20.0, SKYBLUE);
-        draw_text_layout(&layout_48, 120.0, 240.0, WHITE);
+        draw_text("32 px", 32.0, 220.0, 20.0, SKYBLUE);
+        draw_text_layout(&layout_32, 120.0, 220.0, WHITE);
+
+        draw_text("48 px", 32.0, 310.0, 20.0, SKYBLUE);
+        draw_text_layout(&layout_48, 120.0, 310.0, WHITE);
 
         next_frame().await;
     }
