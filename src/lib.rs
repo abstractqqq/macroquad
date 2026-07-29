@@ -39,7 +39,7 @@
 use miniquad::*;
 
 use foldhash::{HashMap, HashMapExt};
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
@@ -185,12 +185,8 @@ struct Context {
 
     simulate_mouse_with_touch: bool,
 
-    keys_down: HashSet<KeyCode>,
-    keys_pressed: HashSet<KeyCode>,
-    keys_released: HashSet<KeyCode>,
-    mouse_down: HashSet<MouseButton>,
-    mouse_pressed: HashSet<MouseButton>,
-    mouse_released: HashSet<MouseButton>,
+    keyboard: input::KeyboardState,
+    mouse_buttons: input::MouseButtonState,
     touches: HashMap<u64, input::Touch>,
     chars_pressed_queue: VecDeque<char>,
     chars_pressed_ui_queue: VecDeque<char>,
@@ -334,14 +330,10 @@ impl Context {
 
             simulate_mouse_with_touch: true,
 
-            keys_down: HashSet::new(),
-            keys_pressed: HashSet::new(),
-            keys_released: HashSet::new(),
+            keyboard: input::KeyboardState::new(),
             chars_pressed_queue: VecDeque::new(),
             chars_pressed_ui_queue: VecDeque::new(),
-            mouse_down: HashSet::new(),
-            mouse_pressed: HashSet::new(),
-            mouse_released: HashSet::new(),
+            mouse_buttons: input::MouseButtonState::default(),
             touches: HashMap::new(),
             mouse_position: vec2(0., 0.),
             last_mouse_position: None,
@@ -447,10 +439,8 @@ impl Context {
         telemetry::end_gpu_query();
 
         self.mouse_wheel = Vec2::new(0., 0.);
-        self.keys_pressed.clear();
-        self.keys_released.clear();
-        self.mouse_pressed.clear();
-        self.mouse_released.clear();
+        self.keyboard.clear_frame();
+        self.mouse_buttons.clear_frame();
         self.last_mouse_position = Some(crate::prelude::mouse_position_local());
 
         self.quit_requested = false;
@@ -593,8 +583,7 @@ impl EventHandler for Stage {
     fn mouse_button_down_event(&mut self, btn: MouseButton, x: f32, y: f32) {
         let context = get_context();
 
-        context.mouse_down.insert(btn);
-        context.mouse_pressed.insert(btn);
+        context.mouse_buttons.press(btn);
 
         context
             .input_events
@@ -613,8 +602,7 @@ impl EventHandler for Stage {
     fn mouse_button_up_event(&mut self, btn: MouseButton, x: f32, y: f32) {
         let context = get_context();
         //     println!("btn = {}", btn as u32);
-        context.mouse_down.remove(&btn);
-        context.mouse_released.insert(btn);
+        context.mouse_buttons.release(btn);
 
         context
             .input_events
@@ -631,7 +619,7 @@ impl EventHandler for Stage {
 
     fn mouse_leave_event(&mut self) {
         let context = get_context();
-        context.mouse_released.extend(context.mouse_down.drain());
+        context.mouse_buttons.release_all();
     }
 
     fn mouse_enter_event(&mut self, btn: MouseButton, x: f32, y: f32) {
@@ -646,8 +634,7 @@ impl EventHandler for Stage {
             .iter_mut()
             .for_each(|arr| arr.push(MiniquadInputEvent::MouseButtonUp { x, y, btn }));
         if btn != MouseButton::Unknown {
-            context.mouse_down.insert(btn);
-            context.mouse_pressed.insert(btn);
+            context.mouse_buttons.press(btn);
         }
 
         if context.update_on.mouse_up {
@@ -710,10 +697,7 @@ impl EventHandler for Stage {
 
     fn key_down_event(&mut self, keycode: KeyCode, modifiers: KeyMods, repeat: bool) {
         let context = get_context();
-        context.keys_down.insert(keycode);
-        if repeat == false {
-            context.keys_pressed.insert(keycode);
-        }
+        context.keyboard.press(keycode, repeat);
 
         context.input_events.iter_mut().for_each(|arr| {
             arr.push(MiniquadInputEvent::KeyDown {
@@ -734,8 +718,7 @@ impl EventHandler for Stage {
 
     fn key_up_event(&mut self, keycode: KeyCode, modifiers: KeyMods) {
         let context = get_context();
-        context.keys_down.remove(&keycode);
-        context.keys_released.insert(keycode);
+        context.keyboard.release(keycode);
 
         context
             .input_events
@@ -861,8 +844,8 @@ impl EventHandler for Stage {
         context.audio_context.pause();
 
         // Clear held down keys and button and announce them as released
-        context.mouse_released.extend(context.mouse_down.drain());
-        context.keys_released.extend(context.keys_down.drain());
+        context.mouse_buttons.release_all();
+        context.keyboard.release_all();
 
         // Announce all touches as released
         for (_, touch) in context.touches.iter_mut() {

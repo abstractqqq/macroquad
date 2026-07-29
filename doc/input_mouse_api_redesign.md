@@ -44,6 +44,7 @@ struct KeyboardState {
     down_order: Vec<KeyCode>,
     pressed_order: Vec<KeyCode>,
     released_order: Vec<KeyCode>,
+    last_pressed: Option<KeyCode>,
 }
 ```
 
@@ -66,6 +67,8 @@ Responsibilities of each field:
 - `pressed_order` and `released_order` preserve event order.
 - `down_order` allows `keys_down()` to return deterministic press order
   without scanning every possible key.
+- `last_pressed` records the most recent non-repeat press even when the same
+  key is pressed more than once in a frame.
 
 The vectors contain no duplicates. The transition bitsets are used to enforce
 that invariant.
@@ -172,7 +175,7 @@ pub fn keys_released() -> Vec<KeyCode>;
 pub fn last_key_pressed() -> Option<KeyCode>;
 ```
 
-`last_key_pressed()` returns `pressed_order.last().copied()`.
+`last_key_pressed()` returns the separately tracked `last_pressed` value.
 
 Remove the existing `get_keys_pressed`, `get_keys_down`,
 `get_keys_released`, and `get_last_key_pressed` functions rather than keeping

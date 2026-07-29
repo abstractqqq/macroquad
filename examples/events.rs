@@ -19,7 +19,7 @@ async fn main() {
                 .ui(ui, |ui| {
                     ui.label(None, "Pressed kbd keys");
 
-                    if let Some(key) = get_last_key_pressed() {
+                    if let Some(key) = last_key_pressed() {
                         ui.label(None, &format!("{key:?}"))
                     }
                 });
