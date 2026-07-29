@@ -85,7 +85,7 @@ impl Font {
 
 #[derive(Debug, Clone, Copy)]
 struct GlyphInfo {
-    sprite: SpriteKey,
+    sprite: Option<SpriteKey>,
     left: i32,
     top: i32,
 }
@@ -337,11 +337,13 @@ impl RichTextRenderer {
         else {
             return false;
         };
-        if rendered.image.width == 0 || rendered.image.height == 0 {
-            return false;
-        }
-        let sprite = state.atlas.new_unique_id();
-        state.atlas.cache_sprite(sprite, rendered.image);
+        let sprite = if rendered.image.width == 0 || rendered.image.height == 0 {
+            None
+        } else {
+            let sprite = state.atlas.new_unique_id();
+            state.atlas.cache_sprite(sprite, rendered.image);
+            Some(sprite)
+        };
         state.glyphs.insert(
             glyph_id,
             GlyphInfo {
@@ -449,7 +451,10 @@ impl RichTextRenderer {
             else {
                 continue;
             };
-            let Some(sprite) = state.atlas.get(info.sprite) else {
+            let Some(sprite_key) = info.sprite else {
+                continue;
+            };
+            let Some(sprite) = state.atlas.get(sprite_key) else {
                 continue;
             };
             let logical_x = (glyph.x + info.left as f32) * draw_scale_x;

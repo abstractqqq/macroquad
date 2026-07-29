@@ -28,7 +28,7 @@ pub(crate) const BASE_FONT_SIZE: f32 = 32.0;
 
 #[derive(Debug, Clone, Copy)]
 struct GlyphInfo {
-    sprite: SpriteKey,
+    sprite: Option<SpriteKey>,
     left: i32,
     top: i32,
 }
@@ -265,11 +265,13 @@ impl TextRenderer {
         else {
             return false;
         };
-        if rendered.image.width == 0 || rendered.image.height == 0 {
-            return false;
-        }
-        let sprite = render_font.atlas.new_unique_id();
-        render_font.atlas.cache_sprite(sprite, rendered.image);
+        let sprite = if rendered.image.width == 0 || rendered.image.height == 0 {
+            None
+        } else {
+            let sprite = render_font.atlas.new_unique_id();
+            render_font.atlas.cache_sprite(sprite, rendered.image);
+            Some(sprite)
+        };
         render_font.glyphs.insert(
             glyph_id,
             GlyphInfo {
@@ -369,7 +371,10 @@ impl TextRenderer {
             else {
                 continue;
             };
-            let Some(sprite) = render_font.atlas.get(info.sprite) else {
+            let Some(sprite_key) = info.sprite else {
+                continue;
+            };
+            let Some(sprite) = render_font.atlas.get(sprite_key) else {
                 continue;
             };
             let logical_x = (glyph.x + info.left as f32) * draw_scale_x;

@@ -1,8 +1,8 @@
 use macroquad::{prelude::*, rich_text};
 
 const CHINESE: &str =
-    "宏观四方是一个简单易用的 Rust 游戏引擎，支持桌面、网页、\n安卓和苹果平台。中文字体渲染性能测试。";
-const CHINESE_MULTILINE: &str = "宏观四方是一个简单易用的 Rust 游戏引擎。\n这个示例比较字体加载、文本测量、字形缓存和绘制命令提交。\n天地玄黄，宇宙洪荒，日月盈昃，辰宿列张。";
+    "任务更新: a宏观四方是一个简单易用的 Rust 游戏引擎，支持桌面、网页、\n安卓和苹果平台。中文字体渲染性能测试。";
+const CHINESE_MULTILINE: &str = "宏观四方是一个简单易用的 Rust 游戏引擎。: 123\n这个示例比较字体加载、文本测量、字形缓存和绘制命令提交。\n天地玄黄，宇宙洪荒，日月盈昃，辰宿列张。";
 const COLORED_PREFIX: &str = "文字为白色，";
 const COLORED_BLUE: &str = "这部分是蓝色，";
 const COLORED_SUFFIX: &str = "然后恢复白色。";
@@ -44,7 +44,7 @@ async fn main() {
     let started = get_time();
     let swash_font = load_ttf_font_from_bytes(font_bytes).unwrap();
     let swash_load_us = (get_time() - started) * 1_000_000.0;
-
+    set_default_font(swash_font.clone());
     let started = get_time();
     let rich_font = rich_text::load_ttf_font_from_bytes(font_bytes).unwrap();
     let rich_load_us = (get_time() - started) * 1_000_000.0;
@@ -204,6 +204,7 @@ async fn main() {
             GRAY,
         );
 
+        draw_fps();
         next_frame().await;
     }
 }
