@@ -57,6 +57,7 @@ pub mod material;
 pub mod math;
 pub mod models;
 #[cfg(feature = "rich-text")]
+#[path = "text/rich_text.rs"]
 pub mod rich_text;
 pub mod shapes;
 pub mod text;

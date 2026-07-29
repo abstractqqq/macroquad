@@ -343,7 +343,7 @@ pub fn load_ttf_font_from_bytes(bytes: &[u8]) -> Result<Font, Error> {
 }
 
 pub fn load_default_font() -> Result<Font, Error> {
-    load_ttf_font_from_bytes(include_bytes!("ProggyClean.ttf"))
+    load_ttf_font_from_bytes(include_bytes!("../../assets/fonts/ProggyClean.ttf"))
 }
 
 /// Rasterizes nominal glyphs for a known character set into the font atlas.
@@ -567,7 +567,8 @@ impl FontsStorage {
         text_renderer: &mut TextRenderer,
         filter: miniquad::FilterMode,
     ) -> Self {
-        let default_font = Font::load_from_bytes(include_bytes!("ProggyClean.ttf")).unwrap();
+        let default_font =
+            Font::load_from_bytes(include_bytes!("../../assets/fonts/ProggyClean.ttf")).unwrap();
         text_renderer.register_font(&default_font, ctx, filter);
         text_renderer.warm_characters(&default_font, &Font::ascii_character_list());
         Self { default_font }

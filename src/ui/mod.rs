@@ -653,7 +653,10 @@ impl Ui {
         screen_height: f32,
     ) -> Ui {
         let atlas = Arc::new(Mutex::new(Atlas::new(ctx, miniquad::FilterMode::Nearest)));
-        let font = crate::text::Font::load_from_bytes(include_bytes!("ProggyClean.ttf")).unwrap();
+        let font = crate::text::Font::load_from_bytes(include_bytes!(
+            "../../assets/fonts/ProggyClean.ttf"
+        ))
+        .unwrap();
 
         atlas
             .lock()

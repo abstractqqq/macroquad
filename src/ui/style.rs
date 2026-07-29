@@ -407,7 +407,7 @@ impl Skin {
                 .background(Image {
                     width: 16,
                     height: 30,
-                    bytes: include_bytes!("combobox.img").to_vec(),
+                    bytes: include_bytes!("../../assets/ui/combobox.img").to_vec(),
                 })
                 .build(),
             tabbar_style: Style {

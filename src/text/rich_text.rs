@@ -533,7 +533,7 @@ pub fn load_ttf_font_from_bytes(bytes: &[u8]) -> Result<Font, Error> {
 }
 
 pub fn load_default_font() -> Result<Font, Error> {
-    load_ttf_font_from_bytes(include_bytes!("ProggyClean.ttf"))
+    load_ttf_font_from_bytes(include_bytes!("../../assets/fonts/ProggyClean.ttf"))
 }
 
 pub fn set_font_filter(font: &Font, filter: miniquad::FilterMode) {

@@ -520,7 +520,7 @@ mod tests {
     use super::*;
 
     fn test_font() -> Font {
-        Font::load_from_bytes(include_bytes!("../ProggyClean.ttf")).unwrap()
+        Font::load_from_bytes(include_bytes!("../../assets/fonts/ProggyClean.ttf")).unwrap()
     }
 
     #[test]

@@ -28,12 +28,14 @@ impl Average {
 #[macroquad::main("Swash-only vs Parley + Swash")]
 async fn main() {
     let started = get_time();
-    let swash_font = load_ttf_font_from_bytes(include_bytes!("../src/ProggyClean.ttf")).unwrap();
+    let swash_font =
+        load_ttf_font_from_bytes(include_bytes!("../assets/fonts/ProggyClean.ttf")).unwrap();
     let swash_load_us = (get_time() - started) * 1_000_000.0;
 
     let started = get_time();
     let rich_font =
-        rich_text::load_ttf_font_from_bytes(include_bytes!("../src/ProggyClean.ttf")).unwrap();
+        rich_text::load_ttf_font_from_bytes(include_bytes!("../assets/fonts/ProggyClean.ttf"))
+            .unwrap();
     let rich_load_us = (get_time() - started) * 1_000_000.0;
 
     let mut draw_text_average = Average::default();
