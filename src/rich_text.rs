@@ -1,33 +1,34 @@
-//! Optional Parley + Swash rich-text pipeline, independent from `crate::text`.
+//! Optional Parley rich-text layout backed by the default Swash rasterizer.
 
 use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
+    collections::{hash_map::DefaultHasher, VecDeque},
+    hash::{Hash, Hasher},
+    ops::Range,
+    sync::Arc,
 };
 
 use foldhash::{HashMap, HashMapExt};
-use glam::vec2;
 use parley::{
     fontique::{Blob, Collection, CollectionOptions, FontInfoOverride, SourceCache},
     FontContext, FontFamily, LayoutContext, PositionedLayoutItem, StyleProperty,
 };
-use swash::FontRef;
 
 use crate::{
     color::{Color, WHITE},
     file::load_file,
-    get_quad_context,
-    texture::{draw_texture_ex, DrawTextureParams, Texture2D, TextureHandle},
+    get_context,
+    math::vec2,
+    models::Vertex,
+    quad_gl::{DrawMode, QuadGl},
+    text::{
+        atlas::{Atlas, SpriteKey},
+        rasterizer::Rasterizer,
+        renderer::BASE_FONT_SIZE,
+        FontId,
+    },
+    texture::Texture2D,
     Error,
 };
-
-#[path = "rich_text/atlas.rs"]
-mod atlas;
-#[path = "rich_text/rasterizer.rs"]
-mod rasterizer;
-
-use atlas::Atlas;
-use rasterizer::Rasterizer;
 
 const FAMILY: &str = "macroquad-rich-text";
 
@@ -38,88 +39,10 @@ pub struct TextDimensions {
     pub offset_y: f32,
 }
 
+/// An immutable font handle for the optional rich-text renderer.
 #[derive(Clone)]
 pub struct Font {
-    inner: Arc<FontInner>,
-}
-
-struct FontInner {
-    layout: Mutex<LayoutState>,
-    shaped: Mutex<ShapeCache>,
-    rasterizer: Mutex<Rasterizer>,
-    atlas: Mutex<Atlas>,
-    glyphs: Mutex<HashMap<GlyphCacheKey, GlyphInfo>>,
-}
-
-struct LayoutState {
-    font_context: FontContext,
-    layout_context: LayoutContext<()>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ShapeCacheKey {
-    text: String,
-    pixel_size_bits: u32,
-    max_width_bits: Option<u32>,
-}
-
-struct ShapeCache {
-    entries: HashMap<ShapeCacheKey, Arc<ShapedText>>,
-    insertion_order: VecDeque<ShapeCacheKey>,
-}
-
-impl ShapeCache {
-    const CAPACITY: usize = 128;
-
-    fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-            insertion_order: VecDeque::new(),
-        }
-    }
-
-    fn insert(&mut self, key: ShapeCacheKey, shaped: Arc<ShapedText>) {
-        if self.entries.contains_key(&key) {
-            return;
-        }
-        if self.entries.len() == Self::CAPACITY {
-            if let Some(oldest) = self.insertion_order.pop_front() {
-                self.entries.remove(&oldest);
-            }
-        }
-        self.insertion_order.push_back(key.clone());
-        self.entries.insert(key, shaped);
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct GlyphCacheKey {
-    font_data_id: u64,
-    font_index: u32,
-    glyph_id: u16,
-    pixel_size: u16,
-}
-
-#[derive(Debug, Clone, Copy)]
-struct GlyphInfo {
-    sprite: Option<u64>,
-    left: i32,
-    top: i32,
-}
-
-#[derive(Clone)]
-struct PositionedGlyph {
-    font: parley::FontData,
-    glyph_id: u16,
-    x: f32,
-    y: f32,
-    size: f32,
-}
-
-struct ShapedText {
-    glyphs: Vec<PositionedGlyph>,
-    dimensions: TextDimensions,
-    line_ranges: Vec<std::ops::Range<usize>>,
+    asset: crate::text::Font,
 }
 
 impl std::fmt::Debug for Font {
@@ -127,101 +50,241 @@ impl std::fmt::Debug for Font {
         formatter
             .debug_struct("Font")
             .field("backend", &"Parley + Swash")
+            .field("id", &self.id())
             .finish()
     }
 }
 
 impl Font {
     pub fn load_from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        let font = FontRef::from_index(bytes, 0).ok_or(Error::FontError(
-            "Swash could not parse the supplied font data",
-        ))?;
-        if font.variations().len() != 0 {
-            return Err(Error::FontError("Variable fonts are not supported"));
-        }
-
-        let blob = Blob::new(Arc::new(bytes.to_vec()));
-        let mut collection = Collection::new(CollectionOptions {
-            shared: false,
-            system_fonts: false,
-        });
-        let registered = collection.register_fonts(
-            blob,
-            Some(FontInfoOverride {
-                family_name: Some(FAMILY),
-                ..Default::default()
-            }),
-        );
-        if registered.is_empty() {
-            return Err(Error::FontError(
-                "Parley could not register the supplied font data",
-            ));
-        }
-
-        let font_context = FontContext {
-            collection,
-            source_cache: SourceCache::default(),
-        };
-        let atlas = Atlas::new(get_quad_context(), miniquad::FilterMode::Linear);
         Ok(Self {
-            inner: Arc::new(FontInner {
-                layout: Mutex::new(LayoutState {
-                    font_context,
-                    layout_context: LayoutContext::new(),
-                }),
-                shaped: Mutex::new(ShapeCache::new()),
-                rasterizer: Mutex::new(Rasterizer::new()),
-                atlas: Mutex::new(atlas),
-                glyphs: Mutex::new(HashMap::new()),
-            }),
+            asset: crate::text::Font::load_from_bytes(bytes)?,
         })
     }
 
     pub fn set_filter(&self, filter: miniquad::FilterMode) {
-        self.inner.atlas.lock().unwrap().set_filter(filter);
+        set_font_filter(self, filter);
     }
 
-    pub fn populate_font_cache(&self, text: &str, font_size: u16) {
-        let dpi = miniquad::window::dpi_scale();
-        let pixel_size = (font_size as f32 * dpi).ceil();
-        let shaped = self.shape(text, pixel_size, None);
-        for glyph in &shaped.glyphs {
-            self.cache_glyph(glyph);
+    pub fn populate_font_cache(&self, text: &str, _font_size: u16) {
+        warm_text_cache(self, text);
+    }
+
+    fn id(&self) -> FontId {
+        self.asset.id()
+    }
+
+    fn bytes(&self) -> &[u8] {
+        self.asset.bytes()
+    }
+
+    fn index(&self) -> usize {
+        self.asset.index()
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct GlyphInfo {
+    sprite: SpriteKey,
+    left: i32,
+    top: i32,
+}
+
+#[derive(Clone)]
+struct PositionedGlyph {
+    glyph_id: u16,
+    x: f32,
+    y: f32,
+}
+
+struct ShapedText {
+    glyphs: Vec<PositionedGlyph>,
+    dimensions: TextDimensions,
+    line_ranges: Vec<Range<usize>>,
+}
+
+struct RichFontState {
+    font_context: FontContext,
+    layout_context: LayoutContext<()>,
+    atlas: Atlas,
+    glyphs: HashMap<u16, GlyphInfo>,
+    frozen: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+struct LayoutKey {
+    font: FontId,
+    text_hash: u64,
+    max_width_bits: Option<u32>,
+}
+
+struct LayoutEntry {
+    text: Arc<str>,
+    shaped: Arc<ShapedText>,
+}
+
+struct LayoutCache {
+    entries: HashMap<LayoutKey, Vec<LayoutEntry>>,
+    order: VecDeque<(LayoutKey, Arc<str>)>,
+    len: usize,
+}
+
+impl LayoutCache {
+    const CAPACITY: usize = 256;
+
+    fn new() -> Self {
+        Self {
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+            len: 0,
         }
     }
 
-    fn shape(&self, text: &str, pixel_size: f32, max_width: Option<f32>) -> Arc<ShapedText> {
-        let key = ShapeCacheKey {
-            text: text.to_owned(),
-            pixel_size_bits: pixel_size.to_bits(),
+    fn key(font: FontId, text: &str, max_width: Option<f32>) -> LayoutKey {
+        let mut hasher = DefaultHasher::new();
+        text.hash(&mut hasher);
+        LayoutKey {
+            font,
+            text_hash: hasher.finish(),
             max_width_bits: max_width.map(f32::to_bits),
-        };
-        if let Some(shaped) = self.inner.shaped.lock().unwrap().entries.get(&key).cloned() {
+        }
+    }
+
+    fn get(&self, font: FontId, text: &str, max_width: Option<f32>) -> Option<Arc<ShapedText>> {
+        self.entries
+            .get(&Self::key(font, text, max_width))
+            .and_then(|bucket| {
+                bucket
+                    .iter()
+                    .find(|entry| entry.text.as_ref() == text)
+                    .map(|entry| entry.shaped.clone())
+            })
+    }
+
+    fn insert(
+        &mut self,
+        font: FontId,
+        text: &str,
+        max_width: Option<f32>,
+        shaped: Arc<ShapedText>,
+    ) {
+        let key = Self::key(font, text, max_width);
+        if self
+            .entries
+            .get(&key)
+            .is_some_and(|bucket| bucket.iter().any(|entry| entry.text.as_ref() == text))
+        {
+            return;
+        }
+        while self.len >= Self::CAPACITY {
+            let Some((old_key, old_text)) = self.order.pop_front() else {
+                break;
+            };
+            let mut remove_bucket = false;
+            if let Some(bucket) = self.entries.get_mut(&old_key) {
+                if let Some(index) = bucket
+                    .iter()
+                    .position(|entry| entry.text.as_ref() == old_text.as_ref())
+                {
+                    bucket.swap_remove(index);
+                    self.len -= 1;
+                }
+                remove_bucket = bucket.is_empty();
+            }
+            if remove_bucket {
+                self.entries.remove(&old_key);
+            }
+        }
+        let text: Arc<str> = Arc::from(text);
+        self.order.push_back((key, text.clone()));
+        self.entries
+            .entry(key)
+            .or_default()
+            .push(LayoutEntry { text, shaped });
+        self.len += 1;
+    }
+}
+
+pub(crate) struct RichTextRenderer {
+    fonts: HashMap<FontId, RichFontState>,
+    rasterizer: Rasterizer,
+    layouts: LayoutCache,
+}
+
+impl RichTextRenderer {
+    pub(crate) fn new() -> Self {
+        Self {
+            fonts: HashMap::new(),
+            rasterizer: Rasterizer::new(),
+            layouts: LayoutCache::new(),
+        }
+    }
+
+    fn register_font(
+        &mut self,
+        font: &Font,
+        backend: &mut dyn miniquad::RenderingBackend,
+        filter: miniquad::FilterMode,
+    ) -> Result<(), Error> {
+        if self.fonts.contains_key(&font.id()) {
+            return Ok(());
+        }
+        let blob = Blob::new(Arc::new(font.bytes().to_vec()));
+        let mut collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: false,
+        });
+        if collection
+            .register_fonts(
+                blob,
+                Some(FontInfoOverride {
+                    family_name: Some(FAMILY),
+                    ..Default::default()
+                }),
+            )
+            .is_empty()
+        {
+            return Err(Error::FontError(
+                "Parley could not register the supplied font data",
+            ));
+        }
+        self.fonts.insert(
+            font.id(),
+            RichFontState {
+                font_context: FontContext {
+                    collection,
+                    source_cache: SourceCache::default(),
+                },
+                layout_context: LayoutContext::new(),
+                atlas: Atlas::new(backend, filter),
+                glyphs: HashMap::new(),
+                frozen: false,
+            },
+        );
+        Ok(())
+    }
+
+    fn shape(&mut self, font: &Font, text: &str, max_width: Option<f32>) -> Arc<ShapedText> {
+        if let Some(shaped) = self.layouts.get(font.id(), text, max_width) {
             return shaped;
         }
-
         if text.is_empty() {
-            let shaped = Arc::new(ShapedText {
+            return Arc::new(ShapedText {
                 glyphs: Vec::new(),
                 dimensions: TextDimensions::default(),
                 line_ranges: Vec::new(),
             });
-            self.inner
-                .shaped
-                .lock()
-                .unwrap()
-                .insert(key, shaped.clone());
-            return shaped;
         }
-
-        let mut state = self.inner.layout.lock().unwrap();
-        let LayoutState {
-            font_context,
-            layout_context,
-        } = &mut *state;
-        let mut builder = layout_context.ranged_builder(font_context, text, 1.0, true);
+        let state = self
+            .fonts
+            .get_mut(&font.id())
+            .expect("rich font must be registered before layout");
+        let mut builder =
+            state
+                .layout_context
+                .ranged_builder(&mut state.font_context, text, 1.0, true);
         builder.push_default(StyleProperty::FontFamily(FontFamily::named(FAMILY)));
-        builder.push_default(StyleProperty::FontSize(pixel_size));
+        builder.push_default(StyleProperty::FontSize(BASE_FONT_SIZE));
         let mut layout = builder.build(text);
         layout.break_all_lines(max_width);
 
@@ -240,14 +303,10 @@ impl Font {
         for line in layout.lines() {
             for item in line.items() {
                 if let PositionedLayoutItem::GlyphRun(run) = item {
-                    let font = run.run().font().clone();
-                    let size = run.run().font_size();
                     glyphs.extend(run.positioned_glyphs().map(|glyph| PositionedGlyph {
-                        font: font.clone(),
                         glyph_id: glyph.id as u16,
                         x: glyph.x,
                         y: glyph.y - first_baseline,
-                        size,
                     }));
                 }
             }
@@ -257,51 +316,184 @@ impl Font {
             dimensions,
             line_ranges,
         });
-        self.inner
-            .shaped
-            .lock()
-            .unwrap()
-            .insert(key, shaped.clone());
+        self.layouts
+            .insert(font.id(), text, max_width, shaped.clone());
         shaped
     }
 
-    fn cache_glyph(&self, glyph: &PositionedGlyph) -> GlyphInfo {
-        let key = GlyphCacheKey {
-            font_data_id: glyph.font.data.id(),
-            font_index: glyph.font.index,
-            glyph_id: glyph.glyph_id,
-            pixel_size: glyph.size.ceil() as u16,
+    fn ensure_glyph(&mut self, font: &Font, glyph_id: u16) -> bool {
+        let Some(state) = self.fonts.get_mut(&font.id()) else {
+            return false;
         };
-        if let Some(info) = self.inner.glyphs.lock().unwrap().get(&key).copied() {
-            return info;
+        if state.glyphs.contains_key(&glyph_id) {
+            return true;
         }
-
-        let rendered = self.inner.rasterizer.lock().unwrap().rasterize(
-            &glyph.font,
-            glyph.glyph_id,
-            glyph.size,
-        );
-        let info = if let Some(rendered) = rendered {
-            let sprite = if rendered.image.width == 0 || rendered.image.height == 0 {
-                None
-            } else {
-                Some(self.inner.atlas.lock().unwrap().insert(rendered.image))
-            };
+        if state.frozen {
+            return false;
+        }
+        let Some(rendered) =
+            self.rasterizer
+                .rasterize(font.bytes(), font.index(), glyph_id, BASE_FONT_SIZE)
+        else {
+            return false;
+        };
+        if rendered.image.width == 0 || rendered.image.height == 0 {
+            return false;
+        }
+        let sprite = state.atlas.new_unique_id();
+        state.atlas.cache_sprite(sprite, rendered.image);
+        state.glyphs.insert(
+            glyph_id,
             GlyphInfo {
                 sprite,
                 left: rendered.left,
                 top: rendered.top,
-            }
-        } else {
-            GlyphInfo {
-                sprite: None,
-                left: 0,
-                top: 0,
-            }
-        };
-        self.inner.glyphs.lock().unwrap().insert(key, info);
-        info
+            },
+        );
+        true
     }
+
+    fn warm_text(&mut self, font: &Font, text: &str) {
+        let shaped = self.shape(font, text, None);
+        for glyph in &shaped.glyphs {
+            self.ensure_glyph(font, glyph.glyph_id);
+        }
+    }
+
+    fn warm_characters(&mut self, font: &Font, characters: &[char]) {
+        for character in characters {
+            let mut buffer = [0; 4];
+            self.warm_text(font, character.encode_utf8(&mut buffer));
+        }
+    }
+
+    fn freeze(&mut self, font: &Font, backend: &mut dyn miniquad::RenderingBackend) {
+        self.ensure_glyph(font, 0);
+        if let Some(state) = self.fonts.get_mut(&font.id()) {
+            state.atlas.flush(backend);
+            state.frozen = true;
+        }
+    }
+
+    fn is_frozen(&self, font: &Font) -> bool {
+        self.fonts.get(&font.id()).is_some_and(|state| state.frozen)
+    }
+
+    fn set_filter(
+        &mut self,
+        font: &Font,
+        backend: &mut dyn miniquad::RenderingBackend,
+        filter: miniquad::FilterMode,
+    ) {
+        if let Some(state) = self.fonts.get_mut(&font.id()) {
+            state.atlas.set_filter_with(backend, filter);
+        }
+    }
+
+    fn measure(
+        &mut self,
+        font: &Font,
+        text: &str,
+        requested_size: f32,
+        scale_x: f32,
+        scale_y: f32,
+    ) -> TextDimensions {
+        let dimensions = self.shape(font, text, None).dimensions;
+        let base_scale = requested_size / BASE_FONT_SIZE;
+        TextDimensions {
+            width: dimensions.width * base_scale * scale_x,
+            height: dimensions.height * base_scale * scale_y,
+            offset_y: dimensions.offset_y * base_scale * scale_y,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw(
+        &mut self,
+        font: &Font,
+        text: &str,
+        x: f32,
+        y: f32,
+        requested_size: f32,
+        scale_x: f32,
+        scale_y: f32,
+        rotation: f32,
+        color: Color,
+        gl: &mut QuadGl,
+        backend: &mut dyn miniquad::RenderingBackend,
+    ) -> TextDimensions {
+        let shaped = self.shape(font, text, None);
+        for glyph in &shaped.glyphs {
+            self.ensure_glyph(font, glyph.glyph_id);
+        }
+        let Some(state) = self.fonts.get_mut(&font.id()) else {
+            return TextDimensions::default();
+        };
+        state.atlas.flush(backend);
+        let texture = Texture2D::unmanaged(state.atlas.texture_id());
+        let (atlas_width, atlas_height) = state.atlas.image_size();
+        let base_scale = requested_size / BASE_FONT_SIZE;
+        let draw_scale_x = base_scale * scale_x;
+        let draw_scale_y = base_scale * scale_y;
+        let cos = rotation.cos();
+        let sin = rotation.sin();
+        let indices = [0, 1, 2, 0, 2, 3];
+
+        gl.texture(Some(&texture));
+        gl.draw_mode(DrawMode::Triangles);
+        for glyph in &shaped.glyphs {
+            let Some(info) = state
+                .glyphs
+                .get(&glyph.glyph_id)
+                .or_else(|| state.glyphs.get(&0))
+            else {
+                continue;
+            };
+            let Some(sprite) = state.atlas.get(info.sprite) else {
+                continue;
+            };
+            let logical_x = (glyph.x + info.left as f32) * draw_scale_x;
+            let logical_y = (glyph.y - info.top as f32) * draw_scale_y;
+            let dest_x = x + logical_x * cos - logical_y * sin;
+            let dest_y = y + logical_x * sin + logical_y * cos;
+            let width = sprite.rect.w * draw_scale_x;
+            let height = sprite.rect.h * draw_scale_y;
+            let points = [
+                vec2(dest_x, dest_y),
+                vec2(dest_x + width * cos, dest_y + width * sin),
+                vec2(
+                    dest_x + width * cos - height * sin,
+                    dest_y + width * sin + height * cos,
+                ),
+                vec2(dest_x - height * sin, dest_y + height * cos),
+            ];
+            let sx = sprite.rect.x / atlas_width;
+            let sy = sprite.rect.y / atlas_height;
+            let sw = sprite.rect.w / atlas_width;
+            let sh = sprite.rect.h / atlas_height;
+            let vertices = [
+                Vertex::new(points[0].x, points[0].y, 0.0, sx, sy, color),
+                Vertex::new(points[1].x, points[1].y, 0.0, sx + sw, sy, color),
+                Vertex::new(points[2].x, points[2].y, 0.0, sx + sw, sy + sh, color),
+                Vertex::new(points[3].x, points[3].y, 0.0, sx, sy + sh, color),
+            ];
+            gl.geometry(&vertices, &indices);
+        }
+        TextDimensions {
+            width: shaped.dimensions.width * draw_scale_x,
+            height: shaped.dimensions.height * draw_scale_y,
+            offset_y: shaped.dimensions.offset_y * draw_scale_y,
+        }
+    }
+}
+
+fn register(font: &Font) -> Result<(), Error> {
+    let context = get_context();
+    context.rich_text_renderer.register_font(
+        font,
+        &mut *context.quad_context,
+        context.default_filter_mode,
+    )
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -328,16 +520,70 @@ impl<'a> TextParams<'a> {
 }
 
 pub async fn load_ttf_font(path: &str) -> Result<Font, Error> {
-    let bytes = load_file(path).await?;
+    let bytes = load_file(path)
+        .await
+        .map_err(|_| Error::FontError("The Font file couldn't be loaded"))?;
     load_ttf_font_from_bytes(&bytes)
 }
 
 pub fn load_ttf_font_from_bytes(bytes: &[u8]) -> Result<Font, Error> {
-    Font::load_from_bytes(bytes)
+    let font = Font::load_from_bytes(bytes)?;
+    register(&font)?;
+    Ok(font)
 }
 
 pub fn load_default_font() -> Result<Font, Error> {
     load_ttf_font_from_bytes(include_bytes!("ProggyClean.ttf"))
+}
+
+pub fn set_font_filter(font: &Font, filter: miniquad::FilterMode) {
+    let context = get_context();
+    let _ = context.rich_text_renderer.register_font(
+        font,
+        &mut *context.quad_context,
+        context.default_filter_mode,
+    );
+    context
+        .rich_text_renderer
+        .set_filter(font, &mut *context.quad_context, filter);
+}
+
+pub fn warm_font_cache(font: &Font, characters: &[char]) {
+    if register(font).is_ok() {
+        get_context()
+            .rich_text_renderer
+            .warm_characters(font, characters);
+    }
+}
+
+pub fn warm_text_cache(font: &Font, text: impl AsRef<str>) {
+    if register(font).is_ok() {
+        get_context()
+            .rich_text_renderer
+            .warm_text(font, text.as_ref());
+    }
+}
+
+pub fn warm_texts_cache<'a>(font: &Font, texts: impl IntoIterator<Item = &'a str>) {
+    if register(font).is_ok() {
+        let context = get_context();
+        for text in texts {
+            context.rich_text_renderer.warm_text(font, text);
+        }
+    }
+}
+
+pub fn freeze_font_cache(font: &Font) {
+    if register(font).is_ok() {
+        let context = get_context();
+        context
+            .rich_text_renderer
+            .freeze(font, &mut *context.quad_context);
+    }
+}
+
+pub fn is_font_cache_frozen(font: &Font) -> bool {
+    get_context().rich_text_renderer.is_frozen(font)
 }
 
 pub fn draw_text(
@@ -358,54 +604,23 @@ pub fn draw_text_ex(
     params: TextParams<'_>,
 ) -> TextDimensions {
     let text = text.as_ref();
-    let dpi = miniquad::window::dpi_scale();
-    let pixel_size = (params.font_size as f32 * dpi).ceil();
-    let shaped = params.font.shape(text, pixel_size, None);
-    let scale_x = params.font_scale * params.font_scale_aspect;
-    let scale_y = params.font_scale;
-    let cos = params.rotation.cos();
-    let sin = params.rotation.sin();
-
-    let glyph_infos: Vec<_> = shaped
-        .glyphs
-        .iter()
-        .map(|glyph| params.font.cache_glyph(glyph))
-        .collect();
-    let mut atlas = params.font.inner.atlas.lock().unwrap();
-    let texture = Texture2D {
-        texture: TextureHandle::Unmanaged(atlas.texture()),
-    };
-
-    for (glyph, info) in shaped.glyphs.iter().zip(glyph_infos) {
-        let Some(sprite_id) = info.sprite else {
-            continue;
-        };
-        let Some(sprite) = atlas.get(sprite_id) else {
-            continue;
-        };
-        let logical_x = (glyph.x + info.left as f32) * scale_x / dpi;
-        let logical_y = (glyph.y - info.top as f32) * scale_y / dpi;
-        let dest_x = x + logical_x * cos - logical_y * sin;
-        let dest_y = y + logical_x * sin + logical_y * cos;
-        draw_texture_ex(
-            &texture,
-            dest_x,
-            dest_y,
-            params.color,
-            DrawTextureParams {
-                dest_size: Some(vec2(
-                    sprite.rect.w * scale_x / dpi,
-                    sprite.rect.h * scale_y / dpi,
-                )),
-                source: Some(sprite.rect),
-                rotation: params.rotation,
-                pivot: Some(vec2(dest_x, dest_y)),
-                ..Default::default()
-            },
-        );
+    if text.is_empty() || register(params.font).is_err() {
+        return TextDimensions::default();
     }
-
-    scale_dimensions(shaped.dimensions, dpi, scale_x, scale_y)
+    let context = get_context();
+    context.rich_text_renderer.draw(
+        params.font,
+        text,
+        x,
+        y,
+        params.font_size as f32,
+        params.font_scale * params.font_scale_aspect,
+        params.font_scale,
+        params.rotation,
+        params.color,
+        &mut context.gl,
+        &mut *context.quad_context,
+    )
 }
 
 pub fn measure_text(
@@ -414,9 +629,16 @@ pub fn measure_text(
     font_size: u16,
     font_scale: f32,
 ) -> TextDimensions {
-    let dpi = miniquad::window::dpi_scale();
-    let shaped = font.shape(text.as_ref(), (font_size as f32 * dpi).ceil(), None);
-    scale_dimensions(shaped.dimensions, dpi, font_scale, font_scale)
+    if register(font).is_err() {
+        return TextDimensions::default();
+    }
+    get_context().rich_text_renderer.measure(
+        font,
+        text.as_ref(),
+        font_size as f32,
+        font_scale,
+        font_scale,
+    )
 }
 
 pub fn measure_multiline_text(
@@ -455,14 +677,16 @@ pub fn wrap_text(
     font_scale: f32,
     maximum_line_length: f32,
 ) -> String {
-    let dpi = miniquad::window::dpi_scale();
-    let pixel_size = (font_size as f32 * dpi).ceil();
-    let max_width = maximum_line_length * dpi / font_scale;
-    let shaped = font.shape(text, pixel_size, Some(max_width));
+    if register(font).is_err() {
+        return text.to_owned();
+    }
+    let base_width = maximum_line_length * BASE_FONT_SIZE / (font_size as f32 * font_scale);
+    let shaped = get_context()
+        .rich_text_renderer
+        .shape(font, text, Some(base_width));
     if shaped.line_ranges.len() <= 1 {
         return text.to_owned();
     }
-
     let mut output = String::with_capacity(text.len() + shaped.line_ranges.len() - 1);
     let mut start = 0;
     for range in shaped.line_ranges.iter().take(shaped.line_ranges.len() - 1) {
@@ -475,25 +699,6 @@ pub fn wrap_text(
     }
     output.push_str(&text[start..]);
     output
-}
-
-fn scale_dimensions(
-    dimensions: TextDimensions,
-    dpi: f32,
-    scale_x: f32,
-    scale_y: f32,
-) -> TextDimensions {
-    TextDimensions {
-        width: dimensions.width * scale_x / dpi,
-        height: dimensions.height * scale_y / dpi,
-        offset_y: dimensions.offset_y * scale_y / dpi,
-    }
-}
-
-#[allow(dead_code)]
-fn require_font_send() {
-    fn require_send<T: Send>() {}
-    require_send::<Font>();
 }
 
 pub fn default_text_params(font: &Font) -> TextParams<'_> {

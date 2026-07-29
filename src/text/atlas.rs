@@ -70,6 +70,14 @@ impl Atlas {
 
     pub fn set_filter(&mut self, filter_mode: miniquad::FilterMode) {
         let ctx = get_quad_context();
+        self.set_filter_with(ctx, filter_mode);
+    }
+
+    pub(crate) fn set_filter_with(
+        &mut self,
+        ctx: &mut dyn miniquad::RenderingBackend,
+        filter_mode: miniquad::FilterMode,
+    ) {
         self.filter = filter_mode;
         ctx.texture_set_filter(self.texture, filter_mode, miniquad::MipmapFilterMode::None);
     }
@@ -88,6 +96,11 @@ impl Atlas {
 
     pub fn texture(&mut self) -> miniquad::TextureId {
         let ctx = get_quad_context();
+        self.flush(ctx);
+        self.texture
+    }
+
+    pub(crate) fn flush(&mut self, ctx: &mut dyn miniquad::RenderingBackend) {
         if self.dirty {
             self.dirty = false;
             let (texture_width, texture_height) = ctx.texture_size(self.texture);
@@ -104,8 +117,14 @@ impl Atlas {
 
             ctx.texture_update(self.texture, &self.image.bytes);
         }
+    }
 
+    pub(crate) fn texture_id(&self) -> miniquad::TextureId {
         self.texture
+    }
+
+    pub(crate) fn image_size(&self) -> (f32, f32) {
+        (self.image.width as f32, self.image.height as f32)
     }
 
     pub fn get_uv_rect(&self, key: SpriteKey) -> Option<Rect> {

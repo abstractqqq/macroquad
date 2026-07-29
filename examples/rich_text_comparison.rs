@@ -19,7 +19,7 @@ impl Average {
         self.value_us += (elapsed_us - self.value_us) / self.samples.min(120) as f64;
         if self.samples == 1 || now >= self.next_display_update {
             self.displayed_us = self.value_us;
-            self.next_display_update = now + 5.0;
+            self.next_display_update = now + 1.0;
         }
         self.displayed_us
     }
@@ -98,21 +98,21 @@ async fn main() {
         let measure_rich_us = measure_rich_average.record(now - started, now);
 
         draw_text(
-            &format!("draw_text: {draw_text_us:.2} us (updated every 5s)"),
+            &format!("draw_text: {draw_text_us:.2} us (updated every 1s)"),
             24.0,
             280.0,
             19.0,
             SKYBLUE,
         );
         draw_text(
-            &format!("rich_text::draw_text: {draw_rich_us:.2} us (updated every 5s)"),
+            &format!("rich_text::draw_text: {draw_rich_us:.2} us (updated every 1s)"),
             half + 24.0,
             280.0,
             19.0,
             LIME,
         );
         draw_text(
-            &format!("draw_multiline_text_ex: {multiline_us:.2} us (updated every 5s)"),
+            &format!("draw_multiline_text_ex: {multiline_us:.2} us (updated every 1s)"),
             24.0,
             312.0,
             19.0,
@@ -120,7 +120,7 @@ async fn main() {
         );
         draw_text(
             &format!(
-                "rich_text::draw_multiline_text_ex: {multiline_rich_us:.2} us (updated every 5s)"
+                "rich_text::draw_multiline_text_ex: {multiline_rich_us:.2} us (updated every 1s)"
             ),
             half + 24.0,
             312.0,
@@ -142,14 +142,14 @@ async fn main() {
             LIME,
         );
         draw_text(
-            &format!("measure_text: {measure_us:.2} us (updated every 5s)"),
+            &format!("measure_text: {measure_us:.2} us (updated every 1s)"),
             24.0,
             376.0,
             19.0,
             SKYBLUE,
         );
         draw_text(
-            &format!("rich_text::measure_text: {measure_rich_us:.2} us (updated every 5s)"),
+            &format!("rich_text::measure_text: {measure_rich_us:.2} us (updated every 1s)"),
             half + 24.0,
             376.0,
             19.0,

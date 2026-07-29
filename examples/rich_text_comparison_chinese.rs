@@ -1,7 +1,7 @@
 use macroquad::{prelude::*, rich_text};
 
 const CHINESE: &str =
-    "宏观四方是一个简单易用的 Rust 游戏引擎，支持桌面、网页、安卓和苹果平台。中文字体渲染性能测试。";
+    "宏观四方是一个简单易用的 Rust 游戏引擎，支持桌面、网页、\n安卓和苹果平台。中文字体渲染性能测试。";
 const CHINESE_MULTILINE: &str = "宏观四方是一个简单易用的 Rust 游戏引擎。\n这个示例比较字体加载、文本测量、字形缓存和绘制命令提交。\n天地玄黄，宇宙洪荒，日月盈昃，辰宿列张。";
 const COLORED_PREFIX: &str = "文字为白色，";
 const COLORED_BLUE: &str = "这部分是蓝色，";
@@ -22,7 +22,7 @@ impl Average {
         self.value_us += (elapsed_us - self.value_us) / self.samples.min(120) as f64;
         if self.samples == 1 || now >= self.next_display_update {
             self.displayed_us = self.value_us;
-            self.next_display_update = now + 5.0;
+            self.next_display_update = now + 1.0;
         }
         self.displayed_us
     }
@@ -171,16 +171,16 @@ async fn main() {
                 format!("font load: {rich_load_us:.2} us"),
             ),
             (
-                format!("Chinese draw: {draw_us:.2} us (5s update)"),
-                format!("Chinese rich draw: {draw_rich_us:.2} us (5s update)"),
+                format!("Chinese draw: {draw_us:.2} us (1s update)"),
+                format!("Chinese rich draw: {draw_rich_us:.2} us (1s update)"),
             ),
             (
-                format!("Chinese multiline: {multiline_us:.2} us (5s update)"),
-                format!("Chinese rich multiline: {multiline_rich_us:.2} us (5s update)"),
+                format!("Chinese multiline: {multiline_us:.2} us (1s update)"),
+                format!("Chinese rich multiline: {multiline_rich_us:.2} us (1s update)"),
             ),
             (
-                format!("Chinese measure: {measure_us:.2} us (5s update)"),
-                format!("Chinese rich measure: {measure_rich_us:.2} us (5s update)"),
+                format!("Chinese measure: {measure_us:.2} us (1s update)"),
+                format!("Chinese rich measure: {measure_rich_us:.2} us (1s update)"),
             ),
         ];
         for (index, (left, right)) in rows.iter().enumerate() {

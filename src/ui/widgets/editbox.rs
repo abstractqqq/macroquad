@@ -432,25 +432,21 @@ impl<'a> Editbox<'a> {
                 );
             }
 
-            let mut font = context.style.editbox_style.font.lock().unwrap();
+            let font = context.style.editbox_style.font.clone();
             let font_size = context.style.editbox_style.font_size;
 
             let mut advance = 1.5; // 1.5 - hack to make cursor on newlines visible
 
             if state.in_selected_range(n as u32) {
                 let pos = pos + vec2(x, y);
+                let character_advance =
+                    context
+                        .window
+                        .painter
+                        .character_advance(character, font.as_ref(), font_size);
 
                 context.window.painter.draw_rect(
-                    Rect::new(
-                        pos.x,
-                        pos.y,
-                        context
-                            .window
-                            .painter
-                            .character_advance(character, &font, font_size)
-                            + 1.0,
-                        font_size as f32 - 1.,
-                    ),
+                    Rect::new(pos.x, pos.y, character_advance + 1.0, font_size as f32 - 1.),
                     None,
                     context.style.editbox_style.color_selected,
                 );
@@ -468,7 +464,7 @@ impl<'a> Editbox<'a> {
                         character,
                         pos + vec2(x, y + font_size as f32 - baseline),
                         text_color,
-                        &mut font,
+                        font.as_ref(),
                         font_size,
                     )
                     .unwrap_or(0.);

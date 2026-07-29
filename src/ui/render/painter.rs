@@ -6,13 +6,19 @@ use crate::{
     math::{vec2, Rect, RectOffset, Vec2},
     text::{
         atlas::{Atlas, SpriteKey},
-        Font, TextDimensions,
+        rasterizer::Rasterizer,
+        Font, FontId, TextDimensions,
     },
     texture::Texture2D,
     ui::{style::Style, UiContent},
 };
 
+use foldhash::{HashMap, HashMapExt};
 use std::sync::{Arc, Mutex};
+use swash::{
+    shape::ShapeContext,
+    text::{Codepoint, Script},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct ElementState {
@@ -151,14 +157,28 @@ pub(crate) struct Painter {
     pub commands: Vec<DrawCommand>,
     pub clipping_zone: Option<Rect>,
     font_atlas: Arc<Mutex<Atlas>>,
+    shape_context: ShapeContext,
+    rasterizer: Rasterizer,
+    glyphs: HashMap<(FontId, char, u16), UiGlyph>,
+}
+
+#[derive(Clone, Copy)]
+struct UiGlyph {
+    advance: f32,
+    left: i32,
+    top: i32,
+    sprite: SpriteKey,
 }
 
 impl Painter {
-    pub const fn new(font_atlas: Arc<Mutex<Atlas>>) -> Painter {
+    pub fn new(font_atlas: Arc<Mutex<Atlas>>) -> Painter {
         Painter {
             commands: vec![],
             clipping_zone: None,
             font_atlas,
+            shape_context: ShapeContext::new(),
+            rasterizer: Rasterizer::new(),
+            glyphs: HashMap::new(),
         }
     }
 
@@ -174,16 +194,13 @@ impl Painter {
     /// calculate character horizontal size,
     /// usually used as an advance between current cursor position
     /// and next potential character
-    pub fn character_advance(&self, character: char, font: &Font, font_size: u16) -> f32 {
-        if let Some(font_data) = font.get(character, font_size) {
-            return font_data.advance;
-        }
-
-        0.
+    pub fn character_advance(&mut self, character: char, font: &Font, font_size: u16) -> f32 {
+        self.ensure_ui_glyph(character, font, font_size)
+            .map_or(0.0, |glyph| glyph.advance)
     }
 
-    pub fn content_with_margins_size(&self, style: &Style, content: &UiContent) -> Vec2 {
-        let font = &mut *style.font.lock().unwrap();
+    pub fn content_with_margins_size(&mut self, style: &Style, content: &UiContent) -> Vec2 {
+        let font = style.font.as_ref();
         let font_size = style.font_size;
 
         let background_margin = style.background_margin.unwrap_or_default();
@@ -235,7 +252,7 @@ impl Painter {
         label: &str,
         element_state: ElementState,
     ) {
-        let font = &mut *style.font.lock().unwrap();
+        let font = style.font.as_ref();
         let font_size = style.font_size;
 
         let text_measures = self.label_size(label, None, font, font_size);
@@ -268,7 +285,7 @@ impl Painter {
     ) {
         match content {
             UiContent::Label(data) => {
-                let font = &mut *style.font.lock().unwrap();
+                let font = style.font.as_ref();
                 let font_size = style.font_size;
                 let text_color = style.text_color(element_state);
                 let text_measures = self.label_size(data, None, font, font_size);
@@ -305,13 +322,48 @@ impl Painter {
     }
 
     pub fn label_size(
-        &self,
+        &mut self,
         label: &str,
         _multiline: Option<f32>,
-        font: &mut Font,
+        font: &Font,
         font_size: u16,
     ) -> TextDimensions {
-        font.measure_text(label, font_size, 1.0, 1.0, |_| {})
+        let font_ref = font.font_ref();
+        let metrics = font_ref.metrics(&[]).scale(font_size as f32);
+        let line_height = metrics.ascent + metrics.descent + metrics.leading;
+        let mut width = 0.0_f32;
+        let mut line_count = 0usize;
+        for line in label.split('\n') {
+            line_count += 1;
+            let script = line
+                .chars()
+                .map(Codepoint::script)
+                .find(|script| {
+                    !matches!(script, Script::Common | Script::Inherited | Script::Unknown)
+                })
+                .unwrap_or(Script::Latin);
+            let mut line_width = 0.0;
+            let mut shaper = self
+                .shape_context
+                .builder(font_ref)
+                .script(script)
+                .size(font_size as f32)
+                .build();
+            shaper.add_str(line);
+            shaper.shape_with(|cluster| {
+                line_width += cluster
+                    .glyphs
+                    .iter()
+                    .map(|glyph| glyph.advance)
+                    .sum::<f32>();
+            });
+            width = width.max(line_width);
+        }
+        TextDimensions {
+            width,
+            height: line_height * line_count as f32,
+            offset_y: metrics.ascent,
+        }
     }
 
     /// If character is in font atlas - will return x advance from position to potential next character position
@@ -320,24 +372,19 @@ impl Painter {
         character: char,
         position: Vec2,
         color: Color,
-        font: &mut Font,
+        font: &Font,
         font_size: u16,
     ) -> Option<f32> {
-        if font.get(character, font_size).is_none() {
-            font.cache_glyph(character, font_size);
-        }
-
-        if let Some(font_data) = font.get(character, font_size) {
+        if let Some(font_data) = self.ensure_ui_glyph(character, font, font_size) {
             let glyph = self
                 .font_atlas
                 .lock()
                 .unwrap()
                 .get(font_data.sprite)
                 .unwrap();
-            let left_coord = font_data.offset_x as f32;
-            let top_coord = -glyph.rect.h - font_data.offset_y as f32;
+            let top_coord = -font_data.top as f32;
             let dest = Rect::new(
-                left_coord + position.x,
+                font_data.left as f32 + position.x,
                 top_coord + position.y,
                 glyph.rect.w,
                 glyph.rect.h,
@@ -370,12 +417,57 @@ impl Painter {
         None
     }
 
+    fn ensure_ui_glyph(&mut self, character: char, font: &Font, font_size: u16) -> Option<UiGlyph> {
+        let key = (font.id(), character, font_size);
+        if let Some(glyph) = self.glyphs.get(&key).copied() {
+            return Some(glyph);
+        }
+        let font_ref = font.font_ref();
+        let script = match character.script() {
+            Script::Common | Script::Inherited | Script::Unknown => Script::Latin,
+            script => script,
+        };
+        let mut glyph_id = None;
+        let mut advance = 0.0;
+        let mut shaper = self
+            .shape_context
+            .builder(font_ref)
+            .script(script)
+            .size(font_size as f32)
+            .build();
+        let mut buffer = [0; 4];
+        shaper.add_str(character.encode_utf8(&mut buffer));
+        shaper.shape_with(|cluster| {
+            for glyph in cluster.glyphs {
+                glyph_id.get_or_insert(glyph.id);
+                advance += glyph.advance;
+            }
+        });
+        let rendered =
+            self.rasterizer
+                .rasterize(font.bytes(), font.index(), glyph_id?, font_size as f32)?;
+        if rendered.image.width == 0 || rendered.image.height == 0 {
+            return None;
+        }
+        let mut atlas = self.font_atlas.lock().unwrap();
+        let sprite = atlas.new_unique_id();
+        atlas.cache_sprite(sprite, rendered.image);
+        let glyph = UiGlyph {
+            advance,
+            left: rendered.left,
+            top: rendered.top,
+            sprite,
+        };
+        self.glyphs.insert(key, glyph);
+        Some(glyph)
+    }
+
     pub fn draw_label<T: Into<LabelParams>>(
         &mut self,
         label: &str,
         position: Vec2,
         params: T,
-        font: &mut Font,
+        font: &Font,
         font_size: u16,
     ) {
         if self.clipping_zone.map_or(false, |clip| {

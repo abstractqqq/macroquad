@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 
 pub struct StyleBuilder {
     atlas: Arc<Mutex<Atlas>>,
-    font: Arc<Mutex<Font>>,
+    font: Arc<Font>,
     font_size: u16,
     text_color: Color,
     text_color_hovered: Color,
@@ -34,7 +34,7 @@ pub struct StyleBuilder {
 }
 
 impl StyleBuilder {
-    pub(crate) fn new(default_font: Arc<Mutex<Font>>, atlas: Arc<Mutex<Atlas>>) -> StyleBuilder {
+    pub(crate) fn new(default_font: Arc<Font>, atlas: Arc<Mutex<Atlas>>) -> StyleBuilder {
         StyleBuilder {
             atlas,
             font: default_font,
@@ -58,19 +58,17 @@ impl StyleBuilder {
     }
 
     pub fn with_font(self, font: &Font) -> Result<StyleBuilder, Error> {
-        let mut font = font.clone();
-        font.set_atlas(self.atlas.clone());
         Ok(StyleBuilder {
-            font: Arc::new(Mutex::new(font)),
+            font: Arc::new(font.clone()),
             ..self
         })
     }
 
     pub fn font(self, ttf_bytes: &[u8]) -> Result<StyleBuilder, Error> {
-        let font = Font::load_from_bytes(self.atlas.clone(), ttf_bytes)?;
+        let font = Font::load_from_bytes(ttf_bytes)?;
 
         Ok(StyleBuilder {
-            font: Arc::new(Mutex::new(font)),
+            font: Arc::new(font),
             ..self
         })
     }
@@ -245,7 +243,7 @@ pub struct Style {
     /// Maybe be negative to compensate background_margin when content should overlap the
     /// borders
     pub(crate) margin: Option<RectOffset>,
-    pub(crate) font: Arc<Mutex<Font>>,
+    pub(crate) font: Arc<Font>,
     pub(crate) text_color: Color,
     pub(crate) text_color_hovered: Color,
     pub(crate) text_color_clicked: Color,
@@ -254,7 +252,7 @@ pub struct Style {
 }
 
 impl Style {
-    fn default(font: Arc<Mutex<Font>>) -> Style {
+    fn default(font: Arc<Font>) -> Style {
         Style {
             background: None,
             background_margin: None,
@@ -385,7 +383,7 @@ pub struct Skin {
 }
 
 impl Skin {
-    pub(crate) fn new(atlas: Arc<Mutex<Atlas>>, default_font: Arc<Mutex<Font>>) -> Self {
+    pub(crate) fn new(atlas: Arc<Mutex<Atlas>>, default_font: Arc<Font>) -> Self {
         Skin {
             label_style: Style {
                 margin: Some(RectOffset::new(2., 2., 2., 2.)),

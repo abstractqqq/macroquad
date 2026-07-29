@@ -248,7 +248,7 @@ struct StyleStack {
 }
 
 impl StyleStack {
-    fn new(atlas: Arc<Mutex<Atlas>>, default_font: Arc<Mutex<Font>>) -> StyleStack {
+    fn new(atlas: Arc<Mutex<Atlas>>, default_font: Arc<Font>) -> StyleStack {
         StyleStack {
             default_skin: Skin::new(atlas, default_font),
             custom_skin_stack: vec![],
@@ -365,7 +365,7 @@ pub struct Ui {
     last_item_hovered: bool,
 
     pub(crate) atlas: Arc<Mutex<Atlas>>,
-    pub(crate) default_font: Arc<Mutex<Font>>,
+    pub(crate) default_font: Arc<Font>,
 
     clipboard_selection: String,
     clipboard: Box<dyn crate::ui::ClipboardObject>,
@@ -653,20 +653,14 @@ impl Ui {
         screen_height: f32,
     ) -> Ui {
         let atlas = Arc::new(Mutex::new(Atlas::new(ctx, miniquad::FilterMode::Nearest)));
-        let font =
-            crate::text::Font::load_from_bytes(atlas.clone(), include_bytes!("ProggyClean.ttf"))
-                .unwrap();
-
-        for character in crate::text::Font::ascii_character_list() {
-            font.cache_glyph(character, 13);
-        }
+        let font = crate::text::Font::load_from_bytes(include_bytes!("ProggyClean.ttf")).unwrap();
 
         atlas
             .lock()
             .unwrap()
             .cache_sprite(SpriteKey::Id(0), Image::gen_image_color(1, 1, crate::WHITE));
 
-        let font = Arc::new(Mutex::new(font));
+        let font = Arc::new(font);
         Ui {
             input: Input::default(),
             default_font: font.clone(),

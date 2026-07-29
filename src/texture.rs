@@ -954,7 +954,16 @@ pub fn build_textures_atlas() {
 /// There fore resetting the atlas will render all fonts unusable.
 pub unsafe fn reset_textures_atlas() {
     let context = get_context();
-    context.fonts_storage = crate::text::FontsStorage::new(&mut *context.quad_context);
+    context.text_renderer = crate::text::renderer::TextRenderer::new();
+    #[cfg(feature = "rich-text")]
+    {
+        context.rich_text_renderer = crate::rich_text::RichTextRenderer::new();
+    }
+    context.fonts_storage = crate::text::FontsStorage::new(
+        &mut *context.quad_context,
+        &mut context.text_renderer,
+        context.default_filter_mode,
+    );
     context.texture_batcher = Batcher::new(&mut *context.quad_context);
 }
 

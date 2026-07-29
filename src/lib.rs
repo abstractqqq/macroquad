@@ -211,6 +211,9 @@ struct Context {
     ui_context: UiContext,
     coroutines_context: experimental::coroutines::CoroutinesContext,
     fonts_storage: text::FontsStorage,
+    text_renderer: text::renderer::TextRenderer,
+    #[cfg(feature = "rich-text")]
+    rich_text_renderer: rich_text::RichTextRenderer,
 
     pc_assets_folder: Option<String>,
 
@@ -319,6 +322,12 @@ impl Context {
             miniquad::window::new_rendering_backend();
         let (screen_width, screen_height) = miniquad::window::screen_size();
 
+        let mut text_renderer = text::renderer::TextRenderer::new();
+        let fonts_storage =
+            text::FontsStorage::new(&mut *ctx, &mut text_renderer, default_filter_mode);
+        #[cfg(feature = "rich-text")]
+        let rich_text_renderer = rich_text::RichTextRenderer::new();
+
         Context {
             screen_width,
             screen_height,
@@ -353,7 +362,10 @@ impl Context {
             ),
 
             ui_context: UiContext::new(&mut *ctx, screen_width, screen_height),
-            fonts_storage: text::FontsStorage::new(&mut *ctx),
+            fonts_storage,
+            text_renderer,
+            #[cfg(feature = "rich-text")]
+            rich_text_renderer,
             texture_batcher: texture::Batcher::new(&mut *ctx),
             camera_stack: vec![],
 
