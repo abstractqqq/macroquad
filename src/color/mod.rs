@@ -17,31 +17,22 @@ pub struct Color {
 }
 
 /// Build a color from 4 components of 0..255 values.
-/// This was a temporary solution because [Color::from_rgba] was not a const fn due to
-/// [this issue](https://github.com/rust-lang/rust/issues/57241) waiting to be resolved.
-/// It is not needed anymore.
-#[macro_export]
-macro_rules! color_u8 {
-    ($r:expr, $g:expr, $b:expr, $a:expr) => {
-        Color::new(
-            $r as f32 / 255.,
-            $g as f32 / 255.,
-            $b as f32 / 255.,
-            $a as f32 / 255.,
-        )
-    };
+pub const fn color_u8(r: u8, g: u8, b: u8, a: u8) -> Color {
+    Color::from_rgba(r, g, b, a)
 }
 
 #[test]
 fn color_from_bytes() {
-    assert_eq!(Color::new(1.0, 0.0, 0.0, 1.0), color_u8!(255, 0, 0, 255));
+    const RED: Color = color_u8(255, 0, 0, 255);
+
+    assert_eq!(Color::new(1.0, 0.0, 0.0, 1.0), RED);
     assert_eq!(
-        Color::new(1.0, 0.5, 0.0, 1.0),
-        color_u8!(255, 127.5, 0, 255)
+        Color::new(1.0, 127.0 / 255.0, 0.0, 1.0),
+        color_u8(255, 127, 0, 255)
     );
     assert_eq!(
-        Color::new(0.0, 1.0, 0.5, 1.0),
-        color_u8!(0, 255, 127.5, 255)
+        Color::from_rgba(0, 255, 127, 255),
+        color_u8(0, 255, 127, 255)
     );
 }
 

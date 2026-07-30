@@ -8,10 +8,12 @@ use crate::{
 pub use crate::quad_gl::FilterMode;
 use crate::quad_gl::{DrawMode, Vertex};
 use glam::{vec2, Vec2};
-use slotmap::{TextureIdSlotMap, TextureSlotId};
+use slotmap::{new_key_type, SlotMap};
 use std::sync::Arc;
 
-mod slotmap;
+new_key_type! {
+    pub(crate) struct TextureSlotId;
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TextureSlotGuarded(pub TextureSlotId);
@@ -26,14 +28,14 @@ pub(crate) enum TextureHandle {
 }
 
 pub(crate) struct TexturesContext {
-    textures: TextureIdSlotMap,
+    textures: SlotMap<TextureSlotId, miniquad::TextureId>,
     removed: Vec<TextureSlotId>,
     removed_render_passes: Vec<miniquad::RenderPass>,
 }
 impl TexturesContext {
     pub fn new() -> TexturesContext {
         TexturesContext {
-            textures: TextureIdSlotMap::new(),
+            textures: SlotMap::with_key(),
             removed: Vec::with_capacity(200),
             removed_render_passes: Vec::with_capacity(10),
         }
@@ -48,12 +50,12 @@ impl TexturesContext {
         TextureHandle::Managed(Arc::new(TextureSlotGuarded(self.textures.insert(texture))))
     }
     pub fn texture(&self, texture: TextureSlotId) -> Option<miniquad::TextureId> {
-        self.textures.get(texture)
+        self.textures.get(texture).copied()
     }
     // fn remove(&mut self, texture: TextureSlotId) {
     //     self.textures.remove(texture);
     // }
-    pub const fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.textures.len()
     }
     pub fn garbage_collect(&mut self, ctx: &mut miniquad::Context) {
@@ -63,7 +65,7 @@ impl TexturesContext {
         }
 
         for texture in self.removed.drain(0..) {
-            if let Some(texture) = self.textures.get(texture) {
+            if let Some(texture) = self.textures.get(texture).copied() {
                 ctx.delete_texture(texture);
             }
             self.textures.remove(texture);

@@ -9,12 +9,14 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+use slotmap::{new_key_type, SlotMap};
+
 use crate::exec::resume;
 use crate::get_context;
 
-mod generational_storage;
-
-use generational_storage::{GenerationalId, GenerationalStorage};
+new_key_type! {
+    struct CoroutineId;
+}
 
 struct CoroutineInternal {
     future: Pin<Box<dyn Future<Output = Box<dyn Any>>>>,
@@ -54,7 +56,7 @@ impl CoroutineState {
 }
 
 pub(crate) struct CoroutinesContext {
-    coroutines: GenerationalStorage<CoroutineState>,
+    coroutines: SlotMap<CoroutineId, CoroutineState>,
     active_coroutine_now: Option<f64>,
     active_coroutine_delta: Option<f64>,
 }
@@ -62,14 +64,14 @@ pub(crate) struct CoroutinesContext {
 impl CoroutinesContext {
     pub fn new() -> CoroutinesContext {
         CoroutinesContext {
-            coroutines: GenerationalStorage::new(),
+            coroutines: SlotMap::with_capacity_and_key(1000),
             active_coroutine_now: None,
             active_coroutine_delta: None,
         }
     }
 
     pub fn update(&mut self) {
-        self.coroutines.retain(|coroutine| {
+        self.coroutines.retain(|_, coroutine| {
             if let CoroutineState::Running(ref mut f) = coroutine {
                 if f.manual_poll == false {
                     if let Some(v) = resume(&mut f.future) {
@@ -87,16 +89,16 @@ impl CoroutinesContext {
     }
 
     pub(crate) fn allocated_memory(&self) -> usize {
-        self.coroutines.allocated_memory()
+        self.coroutines.capacity() * size_of::<CoroutineState>()
     }
 
     pub(crate) fn active_coroutines_count(&self) -> usize {
-        self.coroutines.count()
+        self.coroutines.len()
     }
 }
 #[derive(Clone, Copy, Debug)]
 pub struct Coroutine<T = ()> {
-    id: GenerationalId,
+    id: CoroutineId,
     _phantom: PhantomData<T>,
 }
 
@@ -128,7 +130,7 @@ impl<T: 'static + Any> Coroutine<T> {
         let coroutine = context.coroutines.get_mut(self.id);
         if let Some(v) = coroutine.and_then(|c| c.take_value()) {
             let res = Some(*v.downcast().unwrap());
-            context.coroutines.free(self.id);
+            context.coroutines.remove(self.id);
             return res;
         }
 
@@ -190,7 +192,7 @@ impl<T: 'static + Any> Coroutine<T> {
                 if f.has_value {
                     *coroutine = CoroutineState::Value(v);
                 } else {
-                    context.coroutines.free(self.id);
+                    context.coroutines.remove(self.id);
                 }
             }
             context.active_coroutine_now = None;
@@ -208,7 +210,7 @@ pub fn start_coroutine<T: 'static + Any>(
 
     let id = context
         .coroutines
-        .push(CoroutineState::Running(CoroutineInternal {
+        .insert(CoroutineState::Running(CoroutineInternal {
             future: Box::pin(async { Box::new(future.await) as _ }),
             has_value,
             manual_poll: false,
@@ -230,7 +232,24 @@ pub fn stop_all_coroutines() {
 pub fn stop_coroutine<T: 'static + Any>(coroutine: Coroutine<T>) {
     let context = &mut get_context().coroutines_context;
 
-    context.coroutines.free(coroutine.id);
+    context.coroutines.remove(coroutine.id);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cleared_coroutine_keys_stay_invalid() {
+        let mut coroutines: SlotMap<CoroutineId, CoroutineState> = SlotMap::with_key();
+        let old = coroutines.insert(CoroutineState::Nothing);
+
+        coroutines.clear();
+
+        let new = coroutines.insert(CoroutineState::Nothing);
+        assert!(coroutines.get(old).is_none());
+        assert!(coroutines.get(new).is_some());
+    }
 }
 
 pub struct TimerDelayFuture {

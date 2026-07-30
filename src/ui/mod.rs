@@ -1195,10 +1195,9 @@ pub(crate) mod ui_context {
     use crate::ui as megaui;
 
     use std::cell::RefCell;
-    use std::rc::Rc;
 
     pub(crate) struct UiContext {
-        pub ui: Rc<RefCell<megaui::Ui>>,
+        pub ui: RefCell<megaui::Ui>,
         ui_draw_list: Vec<megaui::DrawList>,
         material: Option<Material>,
     }
@@ -1212,7 +1211,7 @@ pub(crate) mod ui_context {
             let ui = megaui::Ui::new(ctx, screen_width, screen_height);
 
             UiContext {
-                ui: Rc::new(RefCell::new(ui)),
+                ui: RefCell::new(ui),
                 ui_draw_list: vec![],
                 material: None,
             }

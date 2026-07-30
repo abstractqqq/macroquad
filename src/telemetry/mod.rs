@@ -333,7 +333,8 @@ pub fn strings() -> Vec<String> {
     get_profiler().strings.clone()
 }
 
-/// Note that coroutines pre-allocate 56Kb, so 56000 as a result doesnt mean a leak
+/// Estimated memory reserved for coroutine values.
+/// Coroutines pre-allocate storage, so a non-zero result does not indicate a leak.
 pub fn coroutines_allocated_memory() -> usize {
     get_context().coroutines_context.allocated_memory()
 }

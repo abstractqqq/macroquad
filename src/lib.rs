@@ -74,6 +74,7 @@ pub mod telemetry;
 
 mod error;
 
+pub use color::color_u8;
 pub use error::Error;
 
 /// Macroquad entry point.
