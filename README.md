@@ -1,10 +1,5 @@
 # macroquad
 
-[![Github Actions](https://github.com/not-fl3/macroquad/workflows/CI/badge.svg)](https://github.com/not-fl3/macroquad/actions?query=workflow%3A)
-[![Docs](https://docs.rs/macroquad/badge.svg?version=0.4.5)](https://docs.rs/macroquad/0.4.5/macroquad/index.html)
-[![Crates.io version](https://img.shields.io/crates/v/macroquad.svg)](https://crates.io/crates/macroquad)
-[![Discord chat](https://img.shields.io/discord/710177966440579103.svg?label=discord%20chat)](https://discord.gg/WfEp6ut)
-
 `macroquad` is a simple and easy to use game library for Rust programming language, heavily inspired by [raylib](https://github.com/raysan5/raylib).
 
 ## Private Fork Changes
@@ -15,7 +10,7 @@ This private fork includes the following changes from upstream Macroquad:
   module entry points use `mod.rs`, and embedded library assets are stored under
   `assets/`.
 - **Faster hash collections:** production uses of
-  `std::collections::HashMap` and `HashSet` have been replaced with Foldhash.
+  `std::collections::HashMap` and `HashSet` have been replaced with Foldhash, this inclusing the hash! macro in UI.
 - **Swash font backend:** text shaping and rasterization now use Swash. Rich-text
   layout is available through the optional `rich-text` Cargo feature, backed by
   Parley.

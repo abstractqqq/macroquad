@@ -28,6 +28,8 @@ pub use render::{DrawList, Vertex};
 pub use style::{Skin, Style, StyleBuilder};
 
 pub use crate::hash;
+#[doc(hidden)]
+pub use hash::hash_value;
 
 pub(crate) use render::ElementState;
 
