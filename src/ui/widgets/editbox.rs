@@ -514,7 +514,8 @@ impl<'a> Editbox<'a> {
 
         ui.end_window();
 
-        *text = text_vec.iter().collect();
+        text.clear();
+        text.extend(text_vec.iter().copied());
         edited
     }
 }

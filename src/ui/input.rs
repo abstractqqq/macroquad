@@ -50,7 +50,7 @@ impl Input {
         self.click_down = false;
         self.click_up = false;
         self.mouse_wheel = Vec2::new(0., 0.);
-        self.input_buffer = vec![];
+        self.input_buffer.clear();
         self.window_active = false;
     }
 }

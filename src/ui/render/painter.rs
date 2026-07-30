@@ -376,12 +376,8 @@ impl Painter {
         font_size: u16,
     ) -> Option<f32> {
         if let Some(font_data) = self.ensure_ui_glyph(character, font, font_size) {
-            let glyph = self
-                .font_atlas
-                .lock()
-                .unwrap()
-                .get(font_data.sprite)
-                .unwrap();
+            let atlas = self.font_atlas.lock().unwrap();
+            let glyph = atlas.get(font_data.sprite).unwrap();
             let top_coord = -font_data.top as f32;
             let dest = Rect::new(
                 font_data.left as f32 + position.x,
@@ -397,11 +393,8 @@ impl Painter {
                 return Some(advance);
             }
 
-            let source = self
-                .font_atlas
-                .lock()
-                .unwrap()
-                .get_uv_rect(font_data.sprite);
+            let source = atlas.get_uv_rect(font_data.sprite);
+            drop(atlas);
 
             if let Some(source) = source {
                 let cmd = DrawCommand::DrawCharacter {

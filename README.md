@@ -10,12 +10,25 @@ This private fork includes the following changes from upstream Macroquad:
   module entry points use `mod.rs`, and embedded library assets are stored under
   `assets/`.
 - **Faster hash collections:** production uses of
-  `std::collections::HashMap` and `HashSet` have been replaced with Foldhash, this inclusing the hash! macro in UI.
+  `std::collections::HashMap` and `HashSet` have been replaced with Foldhash,
+  including the UI `hash!` macro.
 - **Swash font backend:** text shaping and rasterization now use Swash. Rich-text
   layout is available through the optional `rich-text` Cargo feature, backed by
   Parley.
 - **Ordered input handling:** keyboard state uses compact bitsets for membership
   checks together with `Vec` storage to preserve input-event order.
+
+### Miscellaneous
+
+- Replaced the handwritten coroutine and texture generational stores with typed
+  keys backed by the `slotmap` crate.
+- Replaced the `color_u8!` macro with a typed `const fn` named `color_u8`.
+- Removed an unused `Rc` wrapper from the UI context while retaining its checked
+  `RefCell` borrowing.
+- Reduced UI allocation and synchronization overhead by retaining the input
+  buffer, reusing editbox string storage, and combining per-character atlas
+  lookups under one lock.
+- Updated coroutine memory telemetry to describe its SlotMap-based estimate.
 
 ## Features
 
