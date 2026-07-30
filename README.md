@@ -7,6 +7,21 @@
 
 `macroquad` is a simple and easy to use game library for Rust programming language, heavily inspired by [raylib](https://github.com/raysan5/raylib).
 
+## Private Fork Changes
+
+This private fork includes the following changes from upstream Macroquad:
+
+- **Repository cleanup and reorganization:** source files are grouped by subsystem,
+  module entry points use `mod.rs`, and embedded library assets are stored under
+  `assets/`.
+- **Faster hash collections:** production uses of
+  `std::collections::HashMap` and `HashSet` have been replaced with Foldhash.
+- **Swash font backend:** text shaping and rasterization now use Swash. Rich-text
+  layout is available through the optional `rich-text` Cargo feature, backed by
+  Parley.
+- **Ordered input handling:** keyboard state uses compact bitsets for membership
+  checks together with `Vec` storage to preserve input-event order.
+
 ## Features
 
 * Same code for all supported platforms, no platform dependent defines required.
