@@ -36,6 +36,8 @@
 //! }
 //!```
 
+extern crate alloc;
+
 use miniquad::*;
 
 use foldhash::{HashMap, HashMapExt};
@@ -46,6 +48,8 @@ use std::pin::Pin;
 
 mod exec;
 mod quad_gl;
+#[allow(dead_code, private_bounds)]
+mod slotmap;
 mod tobytes;
 
 pub mod audio;
@@ -63,6 +67,7 @@ pub mod shapes;
 pub mod text;
 pub mod texture;
 pub mod time;
+#[cfg(feature = "ui")]
 pub mod ui;
 pub mod window;
 
@@ -151,11 +156,12 @@ pub mod logging {
 pub use ::log as logging;
 pub use miniquad;
 
+#[cfg(feature = "ui")]
+use crate::ui::ui_context::UiContext;
 use crate::{
     color::{colors::*, Color},
     quad_gl::QuadGl,
     texture::TextureHandle,
-    ui::ui_context::UiContext,
 };
 
 use glam::{vec2, Mat4, Vec2};
@@ -191,6 +197,7 @@ struct Context {
     mouse_buttons: input::MouseButtonState,
     touches: HashMap<u64, input::Touch>,
     chars_pressed_queue: VecDeque<char>,
+    #[cfg(feature = "ui")]
     chars_pressed_ui_queue: VecDeque<char>,
     mouse_position: Vec2,
     last_mouse_position: Option<Vec2>,
@@ -206,6 +213,7 @@ struct Context {
     gl: QuadGl,
     camera_matrix: Option<Mat4>,
 
+    #[cfg(feature = "ui")]
     ui_context: UiContext,
     coroutines_context: experimental::coroutines::CoroutinesContext,
     fonts_storage: text::FontsStorage,
@@ -334,6 +342,7 @@ impl Context {
 
             keyboard: input::KeyboardState::new(),
             chars_pressed_queue: VecDeque::new(),
+            #[cfg(feature = "ui")]
             chars_pressed_ui_queue: VecDeque::new(),
             mouse_buttons: input::MouseButtonState::default(),
             touches: HashMap::new(),
@@ -355,6 +364,7 @@ impl Context {
                 draw_call_index_capacity,
             ),
 
+            #[cfg(feature = "ui")]
             ui_context: UiContext::new(&mut *ctx, screen_width, screen_height),
             fonts_storage,
             text_renderer,
@@ -410,6 +420,7 @@ impl Context {
     fn begin_frame(&mut self) {
         telemetry::begin_gpu_query("GPU");
 
+        #[cfg(feature = "ui")]
         self.ui_context.process_input();
 
         let color = Self::DEFAULT_BG_COLOR;
@@ -423,6 +434,7 @@ impl Context {
 
         self.perform_render_passes();
 
+        #[cfg(feature = "ui")]
         self.ui_context.draw(get_quad_context(), &mut self.gl);
         let screen_mat = self.pixel_perfect_projection_matrix();
         self.gl.draw(get_quad_context(), screen_mat);
@@ -686,6 +698,7 @@ impl EventHandler for Stage {
         let context = get_context();
 
         context.chars_pressed_queue.push_back(character);
+        #[cfg(feature = "ui")]
         context.chars_pressed_ui_queue.push_back(character);
 
         context.input_events.iter_mut().for_each(|arr| {

@@ -16,6 +16,7 @@ audio = ["quad-snd"]
 log-rs = ["log"]
 glam-serde = ["glam/serde"]
 default = []
+ui = []
 rich-text = ["dep:parley"]
 
 [package.metadata.android]
@@ -34,7 +35,6 @@ glam = { version = "0.27", features = ["scalar-math"] }
 image = { version = "0.24", default-features = false, features = ["png", "tga"] }
 macroquad_macro = { version = "0.1.8", path = "macroquad_macro" }
 foldhash = "0.2"
-slotmap = "1.1"
 parley = { version = "0.11", optional = true, default-features = false, features = ["std"] }
 swash = "0.2"
 backtrace = { version = "0.3.60", optional = true }

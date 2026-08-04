@@ -9,14 +9,10 @@ use std::marker::PhantomData;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
-use slotmap::{new_key_type, SlotMap};
+use crate::slotmap::{DefaultKey as CoroutineId, SlotMap};
 
 use crate::exec::resume;
 use crate::get_context;
-
-new_key_type! {
-    struct CoroutineId;
-}
 
 struct CoroutineInternal {
     future: Pin<Box<dyn Future<Output = Box<dyn Any>>>>,

@@ -7,13 +7,9 @@ use crate::{
 
 pub use crate::quad_gl::FilterMode;
 use crate::quad_gl::{DrawMode, Vertex};
+use crate::slotmap::{DefaultKey as TextureSlotId, SlotMap};
 use glam::{vec2, Vec2};
-use slotmap::{new_key_type, SlotMap};
 use std::sync::Arc;
-
-new_key_type! {
-    pub(crate) struct TextureSlotId;
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct TextureSlotGuarded(pub TextureSlotId);

@@ -41,7 +41,9 @@ impl Atlas {
     const UNIQUENESS_OFFSET: u64 = 100000;
 
     pub fn new(ctx: &mut dyn miniquad::RenderingBackend, filter: miniquad::FilterMode) -> Atlas {
-        let image = Image::gen_image_color(512, 512, Color::new(0.0, 0.0, 0.0, 0.0));
+        // macroquad's default was 512x512
+        // Too small. Use 1024x1024 instead.
+        let image = Image::gen_image_color(1024, 1024, Color::new(0.0, 0.0, 0.0, 0.0));
         let texture = ctx.new_texture_from_rgba8(image.width, image.height, &image.bytes);
         ctx.texture_set_filter(
             texture,

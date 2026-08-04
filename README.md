@@ -21,7 +21,7 @@ This private fork includes the following changes from upstream Macroquad:
 ### Miscellaneous
 
 - Replaced the handwritten coroutine and texture generational stores with typed
-  keys backed by the `slotmap` crate.
+  generational keys.
 - Replaced the `color_u8!` macro with a typed `const fn` named `color_u8`.
 - Removed an unused `Rc` wrapper from the UI context while retaining its checked
   `RefCell` borrowing.
