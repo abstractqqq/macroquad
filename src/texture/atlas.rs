@@ -7,11 +7,7 @@ pub struct Sprite {
     pub rect: Rect,
 }
 
-#[derive(Debug, Eq, PartialEq, Hash, Clone, Copy)]
-pub enum SpriteKey {
-    Texture(miniquad::TextureId),
-    Id(u64),
-}
+pub type SpriteKey = miniquad::TextureId;
 pub struct Atlas {
     texture: miniquad::TextureId,
     image: Image,
@@ -23,8 +19,6 @@ pub struct Atlas {
     pub dirty: bool,
 
     filter: miniquad::FilterMode,
-
-    unique_id: u64,
 }
 
 impl Drop for Atlas {
@@ -35,10 +29,8 @@ impl Drop for Atlas {
 }
 
 impl Atlas {
-    // pixel gap between glyphs in the atlas
+    // Pixel gap between packed textures.
     const GAP: u16 = 2;
-    // well..
-    const UNIQUENESS_OFFSET: u64 = 100000;
 
     pub fn new(ctx: &mut dyn miniquad::RenderingBackend, filter: miniquad::FilterMode) -> Atlas {
         // rayquad's default was 512x512
@@ -56,14 +48,7 @@ impl Atlas {
             max_line_height: 0,
             sprites: HashMap::new(),
             filter,
-            unique_id: Self::UNIQUENESS_OFFSET,
         }
-    }
-
-    pub fn new_unique_id(&mut self) -> SpriteKey {
-        self.unique_id += 1;
-
-        SpriteKey::Id(self.unique_id)
     }
 
     pub fn set_filter(&mut self, filter_mode: miniquad::FilterMode) {
@@ -82,11 +67,6 @@ impl Atlas {
 
     pub fn get(&self, key: SpriteKey) -> Option<Sprite> {
         self.sprites.get(&key).cloned()
-    }
-
-    pub(crate) fn clear_sprite_index(&mut self) {
-        self.sprites.clear();
-        self.sprites.shrink_to_fit();
     }
 
     pub fn texture(&mut self) -> miniquad::TextureId {
@@ -112,14 +92,6 @@ impl Atlas {
 
             ctx.texture_update(self.texture, &self.image.bytes);
         }
-    }
-
-    pub(crate) fn texture_id(&self) -> miniquad::TextureId {
-        self.texture
-    }
-
-    pub(crate) fn image_size(&self) -> (f32, f32) {
-        (self.image.width as f32, self.image.height as f32)
     }
 
     pub fn get_uv_rect(&self, key: SpriteKey) -> Option<Rect> {
@@ -156,7 +128,7 @@ impl Atlas {
 
         // texture bounds exceeded
         if y + sprite.height > self.image.height || x + sprite.width > self.image.width {
-            // reset glyph cache state
+            // Reset packing state and rebuild the larger texture atlas.
             let sprites = self.sprites.drain().collect::<Vec<_>>();
             self.cursor_x = 0;
             self.cursor_y = 0;
@@ -164,7 +136,7 @@ impl Atlas {
 
             let old_image = self.image.clone();
 
-            // increase font texture size
+            // Increase the texture atlas size.
             // note: if we tried to fit gigantic texture into a small atlas,
             // new_width will still be not enough. But its fine, it will
             // be regenerated on the recursion call.
@@ -185,14 +157,13 @@ impl Atlas {
         } else {
             self.dirty = true;
 
-            for j in 0..height {
-                for i in 0..width {
-                    self.image.set_pixel(
-                        x as u32 + i as u32,
-                        y as u32 + j as u32,
-                        sprite.get_pixel(i as u32, j as u32),
-                    );
-                }
+            let atlas_stride = self.image.width as usize * 4;
+            let sprite_stride = width * 4;
+            for row in 0..height {
+                let source = row * sprite_stride;
+                let destination = (y as usize + row) * atlas_stride + x as usize * 4;
+                self.image.bytes[destination..destination + sprite_stride]
+                    .copy_from_slice(&sprite.bytes[source..source + sprite_stride]);
             }
 
             self.sprites.insert(
@@ -202,24 +173,5 @@ impl Atlas {
                 },
             );
         }
-    }
-
-    /// Caches a sprite without resizing the atlas.
-    pub(crate) fn try_cache_sprite(&mut self, key: SpriteKey, sprite: Image) -> bool {
-        let width = sprite.width;
-        let height = sprite.height;
-        let (x, y) = if self.cursor_x + width < self.image.width {
-            (self.cursor_x + Self::GAP, self.cursor_y)
-        } else {
-            (
-                Self::GAP,
-                self.cursor_y + self.max_line_height + Self::GAP * 2,
-            )
-        };
-        if x + width > self.image.width || y + height > self.image.height {
-            return false;
-        }
-        self.cache_sprite(key, sprite);
-        true
     }
 }

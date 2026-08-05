@@ -16,7 +16,6 @@ use crate::{
     models::Vertex,
     quad_gl::{DrawMode, QuadGl},
     text::{renderer::BASE_FONT_SIZE, FontId, FontLoadParams},
-    texture::Texture2D,
     Error,
 };
 
@@ -312,8 +311,8 @@ impl RichTextRenderer {
     ) -> TextDimensions {
         let shaped = self.shape(font, text, None);
         let atlas = font.asset.atlas();
-        let texture = Texture2D::unmanaged(atlas.texture_id());
-        let (atlas_width, atlas_height) = atlas.image_size();
+        let texture = atlas.texture();
+        let (atlas_width, atlas_height) = atlas.size();
         let layout_scale_x = requested_size / BASE_FONT_SIZE * scale_x;
         let layout_scale_y = requested_size / BASE_FONT_SIZE * scale_y;
         let image_scale_x = requested_size / font.asset.raster_size() * scale_x;

@@ -16,13 +16,16 @@ use crate::{
     Error,
 };
 
-pub(crate) mod atlas;
+mod font_atlas;
 pub(crate) mod rasterizer;
 pub(crate) mod renderer;
 
 use renderer::TextRenderer;
 
-use self::{atlas::Atlas, rasterizer::Rasterizer};
+use self::{
+    font_atlas::{FontAtlas, FontAtlasBuilder},
+    rasterizer::Rasterizer,
+};
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct TextDimensions {
@@ -34,7 +37,7 @@ pub struct TextDimensions {
 struct FontData {
     bytes: Arc<[u8]>,
     index: usize,
-    atlas: Option<Atlas>,
+    atlas: Option<FontAtlas>,
     glyphs: Vec<(u16, GlyphInfo)>,
     raster_size: f32,
 }
@@ -111,7 +114,7 @@ impl Font {
             ));
         }
 
-        let mut atlas = Atlas::new(ctx, params.filter);
+        let mut atlas = FontAtlasBuilder::new(params.filter);
         let mut glyphs = Vec::new();
         let mut rasterizer = Rasterizer::new();
         let mut glyph_ids = Vec::with_capacity(params.characters.len() + 1);
@@ -154,18 +157,9 @@ impl Font {
             let rect = if rendered.image.width == 0 || rendered.image.height == 0 {
                 None
             } else {
-                let sprite = atlas.new_unique_id();
-                if !atlas.try_cache_sprite(sprite, rendered.image) {
-                    return Err(Error::FontError(
-                        "The immutable font atlas is too small for the requested characters",
-                    ));
-                }
-                Some(
-                    atlas
-                        .get(sprite)
-                        .expect("newly cached glyph must exist")
-                        .rect,
-                )
+                Some(atlas.insert(&rendered.image).ok_or(Error::FontError(
+                    "The immutable font atlas is too small for the requested characters",
+                ))?)
             };
             glyphs.push((
                 glyph_id,
@@ -177,8 +171,7 @@ impl Font {
             ));
         }
         glyphs.sort_unstable_by_key(|(glyph_id, _)| *glyph_id);
-        atlas.clear_sprite_index();
-        atlas.flush(ctx);
+        let atlas = atlas.finish(ctx);
         Ok(Self {
             data: Arc::new(FontData {
                 bytes: Arc::from(bytes),
@@ -207,7 +200,7 @@ impl Font {
             .expect("font was validated when it was loaded")
     }
 
-    pub(crate) fn atlas(&self) -> &Atlas {
+    pub(crate) fn atlas(&self) -> &FontAtlas {
         self.data
             .atlas
             .as_ref()

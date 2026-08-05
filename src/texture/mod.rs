@@ -1,9 +1,8 @@
 //! Loading and rendering textures. Also render textures, per-pixel image manipulations.
 
-use crate::{
-    color::Color, file::load_file, get_context, get_quad_context, math::Rect,
-    text::atlas::SpriteKey, Error,
-};
+use crate::{color::Color, file::load_file, get_context, get_quad_context, math::Rect, Error};
+
+pub(crate) mod atlas;
 
 pub use crate::quad_gl::FilterMode;
 use crate::quad_gl::{DrawMode, Vertex};
@@ -901,14 +900,14 @@ impl Texture2D {
 
 pub(crate) struct Batcher {
     unbatched: Vec<Texture2D>,
-    atlas: crate::text::atlas::Atlas,
+    atlas: atlas::Atlas,
 }
 
 impl Batcher {
     pub fn new(ctx: &mut dyn miniquad::RenderingBackend) -> Batcher {
         Batcher {
             unbatched: vec![],
-            atlas: crate::text::atlas::Atlas::new(ctx, miniquad::FilterMode::Linear),
+            atlas: atlas::Atlas::new(ctx, miniquad::FilterMode::Linear),
         }
     }
 
@@ -917,7 +916,7 @@ impl Batcher {
     }
 
     pub fn get(&mut self, texture: &Texture2D) -> Option<(Texture2D, Rect)> {
-        let id = SpriteKey::Texture(texture.raw_miniquad_id());
+        let id = texture.raw_miniquad_id();
         let uv_rect = self.atlas.get_uv_rect(id)?;
         Some((Texture2D::unmanaged(self.atlas.texture()), uv_rect))
     }
@@ -933,7 +932,7 @@ pub fn build_textures_atlas() {
 
     for texture in context.texture_batcher.unbatched.drain(0..) {
         let sprite: Image = texture.get_texture_data();
-        let id = SpriteKey::Texture(texture.raw_miniquad_id());
+        let id = texture.raw_miniquad_id();
 
         context.texture_batcher.atlas.cache_sprite(id, sprite);
     }

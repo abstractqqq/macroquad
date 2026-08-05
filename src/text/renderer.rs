@@ -11,7 +11,6 @@ use crate::{
     math::vec2,
     models::Vertex,
     quad_gl::{DrawMode, QuadGl},
-    texture::Texture2D,
 };
 
 use super::{Font, FontId, TextDimensions};
@@ -320,8 +319,8 @@ impl TextRenderer {
     ) -> TextDimensions {
         let visible_clusters = visible_clusters.min(shaped.clusters.len());
         let atlas = font.atlas();
-        let texture = Texture2D::unmanaged(atlas.texture_id());
-        let (atlas_width, atlas_height) = atlas.image_size();
+        let texture = atlas.texture();
+        let (atlas_width, atlas_height) = atlas.size();
         let layout_scale_x = requested_pixel_size / BASE_FONT_SIZE * scale_x;
         let layout_scale_y = requested_pixel_size / BASE_FONT_SIZE * scale_y;
         let image_scale_x = requested_pixel_size / font.raster_size() * scale_x;
