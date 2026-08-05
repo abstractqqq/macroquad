@@ -1,74 +1,89 @@
-# macroquad
+# RayQuad
 
-`macroquad` is a simple and easy to use game library for Rust programming language, heavily inspired by [raylib](https://github.com/raysan5/raylib).
+RayQuad is an opinionated fork of [Macroquad](https://github.com/not-fl3/macroquad)
+that makes its API and resource model more like
+[Raylib](https://github.com/raysan5/raylib). It keeps Macroquad's small,
+cross-platform rendering foundation while favoring explicit, predictable game
+resources over framework-managed runtime state.
 
-## Private Fork Changes
+RayQuad starts again at version `0.1.0` and is not API-compatible with upstream
+Macroquad.
 
-This private fork includes the following changes from upstream Macroquad:
+## Design differences
+
+The main intentional differences from upstream Macroquad are:
+
+- **No built-in immediate-mode UI:** the bundled UI module, UI feature, UI
+  examples, and UI-based profiler were removed. Applications can choose an
+  external UI library without RayQuad owning a second input and rendering path.
+- **Raylib-style fonts:** loading a font constructs its complete immutable glyph
+  atlas. Drawing scales that atlas and never rasterizes glyphs, grows a font
+  texture, or uploads font data during gameplay. Use `FontLoadParams` with an
+  explicit character repertoire or complete strings when the default repertoire
+  is insufficient; complete strings collect ligatures and contextual forms.
+- **Shader-friendly text:** text uses the currently active material, matching the
+  Raylib pattern of activating a font shader around text drawing.
+- **Explicit entry point:** applications call `Window::new` or
+  `Window::from_config` directly; RayQuad has no companion procedural-macro
+  crate.
+- **Native-only for now:** RayQuad currently targets desktop and mobile platforms.
 
 - **Repository cleanup and reorganization:** source files are grouped by subsystem,
   module entry points use `mod.rs`, and embedded library assets are stored under
   `assets/`.
 - **Faster hash collections:** production uses of
-  `std::collections::HashMap` and `HashSet` have been replaced with Foldhash,
-  including the UI `hash!` macro.
+  `std::collections::HashMap` and `HashSet` have been replaced with Foldhash.
 - **Swash font backend:** text shaping and rasterization now use Swash. Rich-text
   layout is available through the optional `rich-text` Cargo feature, backed by
   Parley.
 - **Ordered input handling:** keyboard state uses compact bitsets for membership
   checks together with `Vec` storage to preserve input-event order.
 
-### Miscellaneous
-
 - Replaced the handwritten coroutine and texture generational stores with typed
   generational keys.
 - Replaced the `color_u8!` macro with a typed `const fn` named `color_u8`.
-- Removed an unused `Rc` wrapper from the UI context while retaining its checked
-  `RefCell` borrowing.
-- Reduced UI allocation and synchronization overhead by retaining the input
-  buffer, reusing editbox string storage, and combining per-character atlas
-  lookups under one lock.
 - Updated coroutine memory telemetry to describe its SlotMap-based estimate.
 
 ## Features
 
-* Same code for all supported platforms, no platform dependent defines required.
+* Native desktop and mobile support.
 * Efficient 2D rendering with automatic geometry batching.
 * Minimal amount of dependencies: build after `cargo clean` takes only 16s on x230(~6 years old laptop).
-* Immediate mode UI library included.
-* Single command deploy for both WASM and Android.
+* Android and iOS support through Miniquad.
 
 ## Supported Platforms
 
 * PC: Windows/Linux/macOS;
-* HTML5;
 * Android;
 * IOS.
 
 ## Build Instructions
 
-### Setting Up a Macroquad Project
+### Setting Up a RayQuad Project
 
-Macroquad is a normal rust dependency, therefore an empty macroquad project may be created with:
+RayQuad is a normal Rust dependency, so an empty project may be created with:
 
 ```sh
 # Create empty cargo project
 cargo init --bin
 ```
 
-Add macroquad as a dependency to Cargo.toml:
+Add RayQuad as a dependency to `Cargo.toml`:
 ```toml
 
 [dependencies]
-macroquad = "0.4"
+rayquad = "0.1"
 ```
 
-Put some macroquad code in `src/main.rs`:
+Put some RayQuad code in `src/main.rs`:
 ```rust
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-#[macroquad::main("BasicShapes")]
-async fn main() {
+fn main() {
+    Window::new("BasicShapes", game());
+}
+
+async fn game() {
     loop {
         clear_background(RED);
 
@@ -83,12 +98,48 @@ async fn main() {
 }
 ```
 
+`main` is now an ordinary synchronous Rust entry point. `Window::new` creates
+the native window and runs the supplied application future. The async `game`
+function contains initialization and the frame loop; `next_frame().await`
+yields control to RayQuad until the next frame.
+
+For custom window configuration, use `Window::from_config`:
+
+```rust
+use rayquad::prelude::*;
+
+fn window_conf() -> Conf {
+    Conf {
+        window_title: "Configured RayQuad".to_owned(),
+        window_width: 1280,
+        window_height: 720,
+        ..Default::default()
+    }
+}
+
+fn main() {
+    Window::from_config(window_conf(), game());
+}
+
+async fn game() {
+    loop {
+        clear_background(BLACK);
+        draw_text("RayQuad", 30.0, 50.0, 36.0, WHITE);
+        next_frame().await;
+    }
+}
+```
+
+RayQuad intentionally does not provide `#[rayquad::main]`. This avoids a
+companion procedural-macro crate and leaves application startup visible in
+normal Rust code.
+
 And to run it natively:
 ```sh
 cargo run
 ```
 
-For more examples take a look at [Macroquad examples folder](https://github.com/not-fl3/macroquad/tree/master/examples)
+The repository's `examples` directory contains additional RayQuad examples.
 
 ### Linux
 
@@ -115,60 +166,7 @@ rustup target add x86_64-pc-windows-gnu
 cargo run --target x86_64-pc-windows-gnu
 ```
 
-### WASM
-
-```sh
-rustup target add wasm32-unknown-unknown
-cargo build --target wasm32-unknown-unknown
-```
-
-This will produce .wasm file in `target/wasm32-unknown-unknown/debug/CRATENAME.wasm` or in `target/wasm32-unknown-unknown/release/CRATENAME.wasm` if built with `--release`.
-
-And then use the following .html to load it:
-
-<details><summary>index.html</summary>
-
-```html
-<html lang="en">
-
-<head>
-    <meta charset="utf-8">
-    <title>TITLE</title>
-    <style>
-        html,
-        body,
-        canvas {
-            margin: 0px;
-            padding: 0px;
-            width: 100%;
-            height: 100%;
-            overflow: hidden;
-            position: absolute;
-            background: black;
-            z-index: 0;
-        }
-    </style>
-</head>
-
-<body>
-    <canvas id="glcanvas" tabindex='1'></canvas>
-    <!-- Minified and statically hosted version of https://github.com/not-fl3/macroquad/blob/master/js/mq_js_bundle.js -->
-    <script src="https://not-fl3.github.io/miniquad-samples/mq_js_bundle.js"></script>
-    <script>load("CRATENAME.wasm");</script> <!-- Your compiled wasm file -->
-</body>
-
-</html>
-```
-</details>
-
-One of the ways to server static .wasm and .html:
-
-```sh
-cargo install basic-http-server
-basic-http-server .
-```
-
-### IOS
+### IOS (Untested)
 
 To run on the simulator:
 
@@ -205,7 +203,7 @@ For details and instructions on provisioning for real iphone, check [https://mac
 
 <details>
 <summary>Tips</summary>
-Adding the following snippet to your Cargo.toml ensures that all dependencies compile in release even in debug mode. In macroquad, this has the effect of making images load several times faster and your applications much more performant, while keeping compile times miraculously low.
+Adding the following snippet to your Cargo.toml ensures that all dependencies compile in release even in debug mode. In RayQuad, this makes image loading substantially faster while retaining quick application rebuilds.
 
 ```toml
 [profile.dev.package.'*']
@@ -215,45 +213,6 @@ opt-level = 3
 
 ## async/await
 
-While macroquad attempts to use as few Rust-specific concepts as possible, `.await` in all examples looks a bit scary.
-Rust's `async/await` is used to solve just one problem - cross platform main loop organization.
-
-<details>
-<summary>Details</summary>
-
-
-The problem: on WASM and android it's not really easy to organize the main loop like this:
-```rust
-fn main() {
-    // do some initialization
-
-    // start main loop
-    loop {
-        // handle input
-
-        // update logic
-
-        // draw frame
-    }
-}
-```
-
-It is fixable on Android with threads, but on web there is not way to "pause" and "resume" WASM execution, so no WASM code should block ever.
-While that loop is blocking for the entire game execution!
-The C++ solution for that problem: https://kripken.github.io/blog/wasm/2019/07/16/asyncify.html
-
-But in Rust we have async/await. Rust's `futures` are basically continuations - `future`'s stack may be stored into a variable to pause/resume execution of future's code at a later point.
-
-async/await support in macroquad comes without any external dependencies - no runtime, no executors and futures-rs is not involved. It's just a way to preserve `main`'s stack on WASM and keep the code cross platform without any WASM-specific main loop.
-</Details>
-
-## Community
-
-- [Quads Discord server](https://discord.gg/WfEp6ut) - a place to chat with the library's devs and other community members.
-- [Awesome Quads](https://github.com/ozkriff/awesome-quads) - a curated list of links to miniquad/macroquad-related code & resources.
-
-# Platinum sponsors
-
-Macroquad is supported by:
-
-[SourceGear](https://www.sourcegear.com/)
+RayQuad retains Macroquad's async application future. It requires no external
+runtime or executor: `Window::new` polls the future as part of the native event
+loop, and `next_frame().await` yields until the following frame.

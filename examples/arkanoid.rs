@@ -1,7 +1,10 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-#[macroquad::main("Arkanoid")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Arkanoid", game());
+}
+
+async fn game() {
     const BLOCKS_W: usize = 10;
     const BLOCKS_H: usize = 10;
     const SCR_W: f32 = 20.0;

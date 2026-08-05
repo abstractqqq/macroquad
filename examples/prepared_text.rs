@@ -1,7 +1,10 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-#[macroquad::main("Prepared text")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Prepared text", game());
+}
+
+async fn game() {
     let text = "Prepared text is shaped once.\nThis line wraps and reveals by cluster.";
     let emphasized = text.find("shaped once").unwrap();
     let layout = prepare_text_layout(

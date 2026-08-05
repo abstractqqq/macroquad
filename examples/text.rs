@@ -1,7 +1,10 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-#[macroquad::main("Text")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Text", game());
+}
+
+async fn game() {
     let font = load_ttf_font("./examples/DancingScriptRegular.ttf")
         .await
         .unwrap();

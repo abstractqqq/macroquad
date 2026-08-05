@@ -77,7 +77,7 @@ impl Color {
     /// # Example
     ///
     /// ```
-    /// use macroquad::prelude::*;
+    /// use rayquad::prelude::*;
     ///
     /// let pink = Color::new(1.00, 0.43, 0.76, 1.00);
     /// assert_eq!(pink.r, 1.00);
@@ -107,7 +107,7 @@ impl Color {
     /// # Example
     ///
     /// ```
-    /// use macroquad::prelude::*;
+    /// use rayquad::prelude::*;
     ///
     /// let light_blue = Color::from_hex(0x3CA7D5);
     /// assert_eq!(light_blue.r, 0.23529412);

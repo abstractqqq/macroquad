@@ -138,12 +138,12 @@ pub fn load_material(
     })
 }
 
-/// All following macroquad rendering calls will use the given material.
+/// All following rayquad rendering calls will use the given material.
 pub fn gl_use_material(material: &Material) {
     get_context().gl.pipeline(Some(material.pipeline.0));
 }
 
-/// Use default macroquad material.
+/// Use default rayquad material.
 pub fn gl_use_default_material() {
     get_context().gl.pipeline(None);
 }

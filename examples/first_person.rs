@@ -1,4 +1,4 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 // use glam::vec3;
 
 const MOVE_SPEED: f32 = 0.1;
@@ -14,8 +14,11 @@ fn conf() -> Conf {
     }
 }
 
-#[macroquad::main(conf)]
-async fn main() {
+fn main() {
+    rayquad::Window::from_config(conf(), game());
+}
+
+async fn game() {
     let mut x = 0.0;
     let mut switch = false;
     let bounds = 8.0;

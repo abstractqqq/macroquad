@@ -1,7 +1,10 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-#[macroquad::main("3D")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("3D", game());
+}
+
+async fn game() {
     let rust_logo = load_texture("examples/rust.png").await.unwrap();
     let ferris = load_texture("examples/ferris.png").await.unwrap();
 

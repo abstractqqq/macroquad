@@ -1,4 +1,4 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
 fn window_conf() -> Conf {
     Conf {
@@ -12,8 +12,11 @@ fn window_conf() -> Conf {
     }
 }
 
-#[macroquad::main(window_conf)]
-async fn main() {
+fn main() {
+    rayquad::Window::from_config(window_conf(), game());
+}
+
+async fn game() {
     loop {
         clear_background(WHITE);
         next_frame().await

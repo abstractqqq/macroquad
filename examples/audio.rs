@@ -1,7 +1,10 @@
-use macroquad::{audio, prelude::*, ui};
+use rayquad::{audio, prelude::*};
 
-#[macroquad::main("Audio")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Audio", game());
+}
+
+async fn game() {
     set_pc_assets_folder("examples");
 
     let sound1 = audio::load_sound("sound.wav").await.unwrap();
@@ -10,11 +13,14 @@ async fn main() {
     loop {
         clear_background(LIGHTGRAY);
 
-        if ui::root_ui().button(None, "Play sound 1") {
+        draw_text("Press 1 to play sound 1", 20.0, 40.0, 30.0, DARKGRAY);
+        draw_text("Press 2 to play sound 2", 20.0, 80.0, 30.0, DARKGRAY);
+
+        if is_key_pressed(KeyCode::Key1) {
             warn!("play 1!");
             audio::play_sound_once(&sound1);
         }
-        if ui::root_ui().button(None, "Play sound 2") {
+        if is_key_pressed(KeyCode::Key2) {
             warn!("play 2!");
             audio::play_sound_once(&sound2);
         }

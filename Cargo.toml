@@ -1,12 +1,10 @@
 [package]
-name = "macroquad"
-version = "0.4.16"
+name = "rayquad"
+version = "0.1.0"
 authors = ["not-fl3 <not.fl3@gmail.com>"]
 edition = "2021"
-homepage = "https://github.com/not-fl3/macroquad"
-repository = "https://github.com/not-fl3/macroquad"
 description = """
-Simple and easy to use graphics library
+An opinionated, Raylib-like fork of Macroquad
 """
 readme="README.md"
 license = "MIT OR Apache-2.0"
@@ -16,7 +14,6 @@ audio = ["quad-snd"]
 log-rs = ["log"]
 glam-serde = ["glam/serde"]
 default = []
-ui = []
 rich-text = ["dep:parley"]
 
 [package.metadata.android]
@@ -33,7 +30,6 @@ miniquad = { version = "=0.4.11", features = ["log-impl"] }
 quad-rand = "0.2.3"
 glam = { version = "0.27", features = ["scalar-math"] }
 image = { version = "0.24", default-features = false, features = ["png", "tga"] }
-macroquad_macro = { version = "0.1.8", path = "macroquad_macro" }
 foldhash = "0.2"
 parley = { version = "0.11", optional = true, default-features = false, features = ["std"] }
 swash = "0.2"
@@ -42,10 +38,7 @@ log = { version = "0.4", optional = true }
 quad-snd = { version = "0.2", optional = true }
 
 [dev-dependencies]
-macroquad-particles = { path = "./particles" }
-macroquad-tiled = { path = "./tiled" }
-macroquad-profiler = { path = "./profiler" }
-macroquad-platformer = { path = "./physics-platformer" }
+rayquad-tiled = { path = "./tiled" }
 
 [[example]]
 name = "rich_text_comparison"
@@ -58,9 +51,9 @@ path = "examples/rich_text_comparison_chinese.rs"
 required-features = ["rich-text"]
 
 # workaround to fix the examples
-# this allows to use macroquad-particles in examples without two versions of macroquad
+# this allows companion crates in examples without two versions of rayquad
 [patch.crates-io]
-macroquad = { path = './' }
+rayquad = { path = './' }
 
 #quad-snd = {path = '../quad-snd'}
 #miniquad = { path = '../miniquad' }

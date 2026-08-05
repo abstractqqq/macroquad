@@ -1,11 +1,11 @@
 [package]
-name = "macroquad-tiled"
-version = "0.2.1"
+name = "rayquad-tiled"
+version = "0.1.0"
 authors = ["Fedor Logachev <not.fl3@gmail.com>"]
 edition = "2018"
 license = "MIT/Apache-2.0"
 description = """
-Tiled editor macroquad intergration
+Tiled editor integration for RayQuad
 """
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -13,4 +13,4 @@ Tiled editor macroquad intergration
 [dependencies]
 nanoserde = "0.1"
 foldhash = "0.2"
-macroquad = { path = "../", version = "0.4.0" }
+rayquad = { path = "../", version = "0.1.0" }

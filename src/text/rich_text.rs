@@ -15,17 +15,12 @@ use crate::{
     math::vec2,
     models::Vertex,
     quad_gl::{DrawMode, QuadGl},
-    text::{
-        atlas::{Atlas, SpriteKey},
-        rasterizer::Rasterizer,
-        renderer::BASE_FONT_SIZE,
-        FontId,
-    },
+    text::{renderer::BASE_FONT_SIZE, FontId, FontLoadParams},
     texture::Texture2D,
     Error,
 };
 
-const FAMILY: &str = "macroquad-rich-text";
+const FAMILY: &str = "rayquad-rich-text";
 
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct TextDimensions {
@@ -51,20 +46,6 @@ impl std::fmt::Debug for Font {
 }
 
 impl Font {
-    pub fn load_from_bytes(bytes: &[u8]) -> Result<Self, Error> {
-        Ok(Self {
-            asset: crate::text::Font::load_from_bytes(bytes)?,
-        })
-    }
-
-    pub fn set_filter(&self, filter: miniquad::FilterMode) {
-        set_font_filter(self, filter);
-    }
-
-    pub fn populate_font_cache(&self, text: &str, _font_size: u16) {
-        warm_text_cache(self, text);
-    }
-
     fn id(&self) -> FontId {
         self.asset.id()
     }
@@ -72,17 +53,6 @@ impl Font {
     fn bytes(&self) -> &[u8] {
         self.asset.bytes()
     }
-
-    fn index(&self) -> usize {
-        self.asset.index()
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-struct GlyphInfo {
-    sprite: Option<SpriteKey>,
-    left: i32,
-    top: i32,
 }
 
 #[derive(Clone)]
@@ -101,9 +71,6 @@ struct ShapedText {
 struct RichFontState {
     font_context: FontContext,
     layout_context: LayoutContext<()>,
-    atlas: Atlas,
-    glyphs: HashMap<u16, GlyphInfo>,
-    frozen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -202,7 +169,6 @@ impl LayoutCache {
 
 pub(crate) struct RichTextRenderer {
     fonts: HashMap<FontId, RichFontState>,
-    rasterizer: Rasterizer,
     layouts: LayoutCache,
 }
 
@@ -210,7 +176,6 @@ impl RichTextRenderer {
     pub(crate) fn new() -> Self {
         Self {
             fonts: HashMap::new(),
-            rasterizer: Rasterizer::new(),
             layouts: LayoutCache::new(),
         }
     }
@@ -218,8 +183,8 @@ impl RichTextRenderer {
     fn register_font(
         &mut self,
         font: &Font,
-        backend: &mut dyn miniquad::RenderingBackend,
-        filter: miniquad::FilterMode,
+        _backend: &mut dyn miniquad::RenderingBackend,
+        _filter: miniquad::FilterMode,
     ) -> Result<(), Error> {
         if self.fonts.contains_key(&font.id()) {
             return Ok(());
@@ -251,9 +216,6 @@ impl RichTextRenderer {
                     source_cache: SourceCache::default(),
                 },
                 layout_context: LayoutContext::new(),
-                atlas: Atlas::new(backend, filter),
-                glyphs: HashMap::new(),
-                frozen: false,
             },
         );
         Ok(())
@@ -316,77 +278,6 @@ impl RichTextRenderer {
         shaped
     }
 
-    fn ensure_glyph(&mut self, font: &Font, glyph_id: u16) -> bool {
-        let Some(state) = self.fonts.get_mut(&font.id()) else {
-            return false;
-        };
-        if state.glyphs.contains_key(&glyph_id) {
-            return true;
-        }
-        if state.frozen {
-            return false;
-        }
-        let Some(rendered) =
-            self.rasterizer
-                .rasterize(font.bytes(), font.index(), glyph_id, BASE_FONT_SIZE)
-        else {
-            return false;
-        };
-        let sprite = if rendered.image.width == 0 || rendered.image.height == 0 {
-            None
-        } else {
-            let sprite = state.atlas.new_unique_id();
-            state.atlas.cache_sprite(sprite, rendered.image);
-            Some(sprite)
-        };
-        state.glyphs.insert(
-            glyph_id,
-            GlyphInfo {
-                sprite,
-                left: rendered.left,
-                top: rendered.top,
-            },
-        );
-        true
-    }
-
-    fn warm_text(&mut self, font: &Font, text: &str) {
-        let shaped = self.shape(font, text, None);
-        for glyph in &shaped.glyphs {
-            self.ensure_glyph(font, glyph.glyph_id);
-        }
-    }
-
-    fn warm_characters(&mut self, font: &Font, characters: &[char]) {
-        for character in characters {
-            let mut buffer = [0; 4];
-            self.warm_text(font, character.encode_utf8(&mut buffer));
-        }
-    }
-
-    fn freeze(&mut self, font: &Font, backend: &mut dyn miniquad::RenderingBackend) {
-        self.ensure_glyph(font, 0);
-        if let Some(state) = self.fonts.get_mut(&font.id()) {
-            state.atlas.flush(backend);
-            state.frozen = true;
-        }
-    }
-
-    fn is_frozen(&self, font: &Font) -> bool {
-        self.fonts.get(&font.id()).is_some_and(|state| state.frozen)
-    }
-
-    fn set_filter(
-        &mut self,
-        font: &Font,
-        backend: &mut dyn miniquad::RenderingBackend,
-        filter: miniquad::FilterMode,
-    ) {
-        if let Some(state) = self.fonts.get_mut(&font.id()) {
-            state.atlas.set_filter_with(backend, filter);
-        }
-    }
-
     fn measure(
         &mut self,
         font: &Font,
@@ -417,21 +308,16 @@ impl RichTextRenderer {
         rotation: f32,
         color: Color,
         gl: &mut QuadGl,
-        backend: &mut dyn miniquad::RenderingBackend,
+        _backend: &mut dyn miniquad::RenderingBackend,
     ) -> TextDimensions {
         let shaped = self.shape(font, text, None);
-        for glyph in &shaped.glyphs {
-            self.ensure_glyph(font, glyph.glyph_id);
-        }
-        let Some(state) = self.fonts.get_mut(&font.id()) else {
-            return TextDimensions::default();
-        };
-        state.atlas.flush(backend);
-        let texture = Texture2D::unmanaged(state.atlas.texture_id());
-        let (atlas_width, atlas_height) = state.atlas.image_size();
-        let base_scale = requested_size / BASE_FONT_SIZE;
-        let draw_scale_x = base_scale * scale_x;
-        let draw_scale_y = base_scale * scale_y;
+        let atlas = font.asset.atlas();
+        let texture = Texture2D::unmanaged(atlas.texture_id());
+        let (atlas_width, atlas_height) = atlas.image_size();
+        let layout_scale_x = requested_size / BASE_FONT_SIZE * scale_x;
+        let layout_scale_y = requested_size / BASE_FONT_SIZE * scale_y;
+        let image_scale_x = requested_size / font.asset.raster_size() * scale_x;
+        let image_scale_y = requested_size / font.asset.raster_size() * scale_y;
         let cos = rotation.cos();
         let sin = rotation.sin();
         let indices = [0, 1, 2, 0, 2, 3];
@@ -439,25 +325,18 @@ impl RichTextRenderer {
         gl.texture(Some(&texture));
         gl.draw_mode(DrawMode::Triangles);
         for glyph in &shaped.glyphs {
-            let Some(info) = state
-                .glyphs
-                .get(&glyph.glyph_id)
-                .or_else(|| state.glyphs.get(&0))
-            else {
+            let Some(info) = font.asset.glyph(glyph.glyph_id) else {
                 continue;
             };
-            let Some(sprite_key) = info.sprite else {
+            let Some(rect) = info.rect else {
                 continue;
             };
-            let Some(sprite) = state.atlas.get(sprite_key) else {
-                continue;
-            };
-            let logical_x = (glyph.x + info.left as f32) * draw_scale_x;
-            let logical_y = (glyph.y - info.top as f32) * draw_scale_y;
+            let logical_x = glyph.x * layout_scale_x + info.left as f32 * image_scale_x;
+            let logical_y = glyph.y * layout_scale_y - info.top as f32 * image_scale_y;
             let dest_x = x + logical_x * cos - logical_y * sin;
             let dest_y = y + logical_x * sin + logical_y * cos;
-            let width = sprite.rect.w * draw_scale_x;
-            let height = sprite.rect.h * draw_scale_y;
+            let width = rect.w * image_scale_x;
+            let height = rect.h * image_scale_y;
             let points = [
                 vec2(dest_x, dest_y),
                 vec2(dest_x + width * cos, dest_y + width * sin),
@@ -467,10 +346,10 @@ impl RichTextRenderer {
                 ),
                 vec2(dest_x - height * sin, dest_y + height * cos),
             ];
-            let sx = sprite.rect.x / atlas_width;
-            let sy = sprite.rect.y / atlas_height;
-            let sw = sprite.rect.w / atlas_width;
-            let sh = sprite.rect.h / atlas_height;
+            let sx = rect.x / atlas_width;
+            let sy = rect.y / atlas_height;
+            let sw = rect.w / atlas_width;
+            let sh = rect.h / atlas_height;
             let vertices = [
                 Vertex::new(points[0].x, points[0].y, 0.0, sx, sy, color),
                 Vertex::new(points[1].x, points[1].y, 0.0, sx + sw, sy, color),
@@ -480,9 +359,9 @@ impl RichTextRenderer {
             gl.geometry(&vertices, &indices);
         }
         TextDimensions {
-            width: shaped.dimensions.width * draw_scale_x,
-            height: shaped.dimensions.height * draw_scale_y,
-            offset_y: shaped.dimensions.offset_y * draw_scale_y,
+            width: shaped.dimensions.width * layout_scale_x,
+            height: shaped.dimensions.height * layout_scale_y,
+            offset_y: shaped.dimensions.offset_y * layout_scale_y,
         }
     }
 }
@@ -520,70 +399,29 @@ impl<'a> TextParams<'a> {
 }
 
 pub async fn load_ttf_font(path: &str) -> Result<Font, Error> {
+    load_ttf_font_ex(path, FontLoadParams::default()).await
+}
+
+pub async fn load_ttf_font_ex(path: &str, params: FontLoadParams) -> Result<Font, Error> {
     let bytes = load_file(path)
         .await
         .map_err(|_| Error::FontError("The Font file couldn't be loaded"))?;
-    load_ttf_font_from_bytes(&bytes)
+    load_ttf_font_from_bytes_ex(&bytes, params)
 }
 
 pub fn load_ttf_font_from_bytes(bytes: &[u8]) -> Result<Font, Error> {
-    let font = Font::load_from_bytes(bytes)?;
+    load_ttf_font_from_bytes_ex(bytes, FontLoadParams::default())
+}
+
+pub fn load_ttf_font_from_bytes_ex(bytes: &[u8], params: FontLoadParams) -> Result<Font, Error> {
+    let asset = crate::text::load_ttf_font_from_bytes_ex(bytes, params)?;
+    let font = Font { asset };
     register(&font)?;
     Ok(font)
 }
 
 pub fn load_default_font() -> Result<Font, Error> {
     load_ttf_font_from_bytes(include_bytes!("../../assets/fonts/ProggyClean.ttf"))
-}
-
-pub fn set_font_filter(font: &Font, filter: miniquad::FilterMode) {
-    let context = get_context();
-    let _ = context.rich_text_renderer.register_font(
-        font,
-        &mut *context.quad_context,
-        context.default_filter_mode,
-    );
-    context
-        .rich_text_renderer
-        .set_filter(font, &mut *context.quad_context, filter);
-}
-
-pub fn warm_font_cache(font: &Font, characters: &[char]) {
-    if register(font).is_ok() {
-        get_context()
-            .rich_text_renderer
-            .warm_characters(font, characters);
-    }
-}
-
-pub fn warm_text_cache(font: &Font, text: impl AsRef<str>) {
-    if register(font).is_ok() {
-        get_context()
-            .rich_text_renderer
-            .warm_text(font, text.as_ref());
-    }
-}
-
-pub fn warm_texts_cache<'a>(font: &Font, texts: impl IntoIterator<Item = &'a str>) {
-    if register(font).is_ok() {
-        let context = get_context();
-        for text in texts {
-            context.rich_text_renderer.warm_text(font, text);
-        }
-    }
-}
-
-pub fn freeze_font_cache(font: &Font) {
-    if register(font).is_ok() {
-        let context = get_context();
-        context
-            .rich_text_renderer
-            .freeze(font, &mut *context.quad_context);
-    }
-}
-
-pub fn is_font_cache_frozen(font: &Font) -> bool {
-    get_context().rich_text_renderer.is_frozen(font)
 }
 
 pub fn draw_text(

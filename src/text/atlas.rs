@@ -41,15 +41,11 @@ impl Atlas {
     const UNIQUENESS_OFFSET: u64 = 100000;
 
     pub fn new(ctx: &mut dyn miniquad::RenderingBackend, filter: miniquad::FilterMode) -> Atlas {
-        // macroquad's default was 512x512
+        // rayquad's default was 512x512
         // Too small. Use 1024x1024 instead.
         let image = Image::gen_image_color(1024, 1024, Color::new(0.0, 0.0, 0.0, 0.0));
         let texture = ctx.new_texture_from_rgba8(image.width, image.height, &image.bytes);
-        ctx.texture_set_filter(
-            texture,
-            miniquad::FilterMode::Nearest,
-            miniquad::MipmapFilterMode::None,
-        );
+        ctx.texture_set_filter(texture, filter, miniquad::MipmapFilterMode::None);
 
         Atlas {
             image,
@@ -88,12 +84,9 @@ impl Atlas {
         self.sprites.get(&key).cloned()
     }
 
-    pub const fn width(&self) -> u16 {
-        self.image.width
-    }
-
-    pub const fn height(&self) -> u16 {
-        self.image.height
+    pub(crate) fn clear_sprite_index(&mut self) {
+        self.sprites.clear();
+        self.sprites.shrink_to_fit();
     }
 
     pub fn texture(&mut self) -> miniquad::TextureId {
@@ -209,5 +202,24 @@ impl Atlas {
                 },
             );
         }
+    }
+
+    /// Caches a sprite without resizing the atlas.
+    pub(crate) fn try_cache_sprite(&mut self, key: SpriteKey, sprite: Image) -> bool {
+        let width = sprite.width;
+        let height = sprite.height;
+        let (x, y) = if self.cursor_x + width < self.image.width {
+            (self.cursor_x + Self::GAP, self.cursor_y)
+        } else {
+            (
+                Self::GAP,
+                self.cursor_y + self.max_line_height + Self::GAP * 2,
+            )
+        };
+        if x + width > self.image.width || y + height > self.image.height {
+            return false;
+        }
+        self.cache_sprite(key, sprite);
+        true
     }
 }

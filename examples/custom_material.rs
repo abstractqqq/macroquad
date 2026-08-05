@@ -1,6 +1,6 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-use macroquad::window::miniquad::*;
+use rayquad::window::miniquad::*;
 
 const VERTEX: &str = r#"#version 100
 attribute vec3 position;
@@ -147,8 +147,11 @@ fn window_conf() -> Conf {
     }
 }
 
-#[macroquad::main(window_conf)]
-async fn main() {
+fn main() {
+    rayquad::Window::from_config(window_conf(), game());
+}
+
+async fn game() {
     let pipeline_params = PipelineParams {
         color_blend: Some(BlendState::new(
             Equation::Add,

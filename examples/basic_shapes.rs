@@ -1,7 +1,10 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-#[macroquad::main("BasicShapes")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("BasicShapes", game());
+}
+
+async fn game() {
     loop {
         clear_background(LIGHTGRAY);
 

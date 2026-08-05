@@ -1,4 +1,4 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
 fn short_angle_dist(a0: f32, a1: f32) -> f32 {
     let max = 360.0;
@@ -17,8 +17,11 @@ fn draw_cross(x: f32, y: f32, color: Color) {
     draw_line(x, y - size, x, y + size, thickness, color);
 }
 
-#[macroquad::main("Camera")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Camera", game());
+}
+
+async fn game() {
     let mut target = (0., 0.);
     let mut zoom = 1.0;
     let mut rotation = 0.0;
@@ -50,22 +53,12 @@ async fn main() {
         if is_key_down(KeyCode::Down) {
             offset.1 -= 0.1;
         }
-        #[cfg(not(target_arch = "wasm32"))]
         if is_key_down(KeyCode::Q) | is_key_down(KeyCode::Escape) {
             break;
         }
 
         match mouse_wheel() {
             (_x, y) if y != 0.0 => {
-                // Normalize mouse wheel values is browser (chromium: 53, firefox: 3)
-                #[cfg(target_arch = "wasm32")]
-                let y = if y < 0.0 {
-                    -1.0
-                } else if y > 0.0 {
-                    1.0
-                } else {
-                    0.0
-                };
                 if is_key_down(KeyCode::LeftControl) {
                     zoom *= 1.1f32.powf(y);
                 } else {

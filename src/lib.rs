@@ -1,12 +1,11 @@
 //!
-//! `macroquad` is a simple and easy to use game library for Rust programming language.
+//! `rayquad` is a simple and easy to use game library for Rust programming language.
 //!
-//! `macroquad` attempts to avoid any rust-specific programming concepts like lifetimes/borrowing, making it very friendly for rust beginners.
+//! `rayquad` attempts to avoid any rust-specific programming concepts like lifetimes/borrowing, making it very friendly for rust beginners.
 //!
 //! ## Supported platforms
 //!
 //! * PC: Windows/Linux/MacOS
-//! * HTML5
 //! * Android
 //! * IOS
 //!
@@ -15,14 +14,16 @@
 //! * Same code for all supported platforms, no platform dependent defines required
 //! * Efficient 2D rendering with automatic geometry batching
 //! * Minimal amount of dependencies: build after `cargo clean` takes only 16s on x230(~6years old laptop)
-//! * Immediate mode UI library included
-//! * Single command deploy for both WASM and Android [build instructions](https://github.com/not-fl3/miniquad/#building-examples)
+//! * Native desktop and mobile targets
 //! # Example
 //! ```no_run
-//! use macroquad::prelude::*;
+//! use rayquad::prelude::*;
 //!
-//! #[macroquad::main("BasicShapes")]
-//! async fn main() {
+//! fn main() {
+//!     Window::new("BasicShapes", game());
+//! }
+//!
+//! async fn game() {
 //!     loop {
 //!         clear_background(RED);
 //!
@@ -67,8 +68,6 @@ pub mod shapes;
 pub mod text;
 pub mod texture;
 pub mod time;
-#[cfg(feature = "ui")]
-pub mod ui;
 pub mod window;
 
 pub mod experimental;
@@ -82,12 +81,13 @@ mod error;
 pub use color::color_u8;
 pub use error::Error;
 
-/// Macroquad entry point.
+/// Starts a RayQuad application.
 ///
 /// ```skip
-/// #[main("Window name")]
-/// async fn main() {
+/// fn main() {
+///     Window::new("Window name", game());
 /// }
+/// async fn game() {}
 /// ```
 ///
 /// ```skip
@@ -98,14 +98,16 @@ pub use error::Error;
 ///         ..Default::default()
 ///     }
 /// }
-/// #[macroquad::main(window_conf)]
-/// async fn main() {
+/// fn main() {
+///     Window::from_config(window_conf(), game());
 /// }
+/// async fn game() {}
 /// ```
 ///
 /// ## Error handling
 ///
-/// `async fn main()` can have the same signature as a normal `main` in Rust.
+/// The application future can return a result handled by user code before it
+/// completes.
 /// The most typical use cases are:
 /// * `async fn main() {}`
 /// * `async fn main() -> Result<(), Error> {}` (note that `Error` should implement `Debug`)
@@ -117,11 +119,11 @@ pub use error::Error;
 /// ```skip
 /// #[derive(Debug)]
 /// enum GameError {
-///     FileError(macroquad::FileError),
+///     FileError(rayquad::FileError),
 ///     SomeThirdPartyCrateError(somecrate::Error)
 /// }
-/// impl From<macroquad::file::FileError> for GameError {
-///     fn from(error: macroquad::file::FileError) -> GameError {
+/// impl From<rayquad::file::FileError> for GameError {
+///     fn from(error: rayquad::file::FileError) -> GameError {
 ///         GameError::FileError(error)
 ///     }
 /// }
@@ -131,15 +133,6 @@ pub use error::Error;
 ///     }
 /// }
 /// ```
-pub use macroquad_macro::main;
-
-/// #[macroquad::test] fn test() {}
-///
-/// Very similar to macroquad::main
-/// Right now it will still spawn a window, just like ::main, therefore
-/// is not really useful for anything than developping macroquad itself
-#[doc(hidden)]
-pub use macroquad_macro::test;
 
 /// Cross platform random generator.
 pub mod rand {
@@ -156,8 +149,6 @@ pub mod logging {
 pub use ::log as logging;
 pub use miniquad;
 
-#[cfg(feature = "ui")]
-use crate::ui::ui_context::UiContext;
 use crate::{
     color::{colors::*, Color},
     quad_gl::QuadGl,
@@ -197,8 +188,6 @@ struct Context {
     mouse_buttons: input::MouseButtonState,
     touches: HashMap<u64, input::Touch>,
     chars_pressed_queue: VecDeque<char>,
-    #[cfg(feature = "ui")]
-    chars_pressed_ui_queue: VecDeque<char>,
     mouse_position: Vec2,
     last_mouse_position: Option<Vec2>,
     mouse_wheel: Vec2,
@@ -213,8 +202,6 @@ struct Context {
     gl: QuadGl,
     camera_matrix: Option<Mat4>,
 
-    #[cfg(feature = "ui")]
-    ui_context: UiContext,
     coroutines_context: experimental::coroutines::CoroutinesContext,
     fonts_storage: text::FontsStorage,
     text_renderer: text::renderer::TextRenderer,
@@ -342,8 +329,6 @@ impl Context {
 
             keyboard: input::KeyboardState::new(),
             chars_pressed_queue: VecDeque::new(),
-            #[cfg(feature = "ui")]
-            chars_pressed_ui_queue: VecDeque::new(),
             mouse_buttons: input::MouseButtonState::default(),
             touches: HashMap::new(),
             mouse_position: vec2(0., 0.),
@@ -364,8 +349,6 @@ impl Context {
                 draw_call_index_capacity,
             ),
 
-            #[cfg(feature = "ui")]
-            ui_context: UiContext::new(&mut *ctx, screen_width, screen_height),
             fonts_storage,
             text_renderer,
             #[cfg(feature = "rich-text")]
@@ -420,9 +403,6 @@ impl Context {
     fn begin_frame(&mut self) {
         telemetry::begin_gpu_query("GPU");
 
-        #[cfg(feature = "ui")]
-        self.ui_context.process_input();
-
         let color = Self::DEFAULT_BG_COLOR;
 
         get_quad_context().clear(Some((color.r, color.g, color.b, color.a)), None, None);
@@ -434,8 +414,6 @@ impl Context {
 
         self.perform_render_passes();
 
-        #[cfg(feature = "ui")]
-        self.ui_context.draw(get_quad_context(), &mut self.gl);
         let screen_mat = self.pixel_perfect_projection_matrix();
         self.gl.draw(get_quad_context(), screen_mat);
 
@@ -502,16 +480,6 @@ impl Context {
 
 #[no_mangle]
 static mut CONTEXT: Option<Context> = None;
-
-// This is required for #[macroquad::test]
-//
-// unfortunately #[cfg(test)] do not work with integration tests
-// so this module should be publicly available
-#[doc(hidden)]
-pub mod test {
-    pub static mut MUTEX: Option<std::sync::Mutex<()>> = None;
-    pub static ONCE: std::sync::Once = std::sync::Once::new();
-}
 
 fn get_context() -> &'static mut Context {
     thread_assert::same_thread();
@@ -698,9 +666,6 @@ impl EventHandler for Stage {
         let context = get_context();
 
         context.chars_pressed_queue.push_back(character);
-        #[cfg(feature = "ui")]
-        context.chars_pressed_ui_queue.push_back(character);
-
         context.input_events.iter_mut().for_each(|arr| {
             arr.push(MiniquadInputEvent::Char {
                 character,
@@ -751,11 +716,8 @@ impl EventHandler for Stage {
         // Unless called every frame, cursor will not remain grabbed
         miniquad::window::set_cursor_grab(get_context().cursor_grabbed);
 
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            // TODO: consider making it a part of miniquad?
-            std::thread::yield_now();
-        }
+        // TODO: consider making it a part of miniquad?
+        std::thread::yield_now();
     }
 
     fn files_dropped_event(&mut self) {
@@ -817,13 +779,13 @@ impl EventHandler for Stage {
 
             // glFinish waits until the drawing is done. See https://registry.khronos.org/OpenGL-Refpages/gl4/html/glFinish.xhtml.
             // Some drivers do this by a busy loop which increases CPU usage to close to 100%.
-            // For discussion see https://github.com/not-fl3/macroquad/issues/275.
+            // For discussion see https://github.com/not-fl3/rayquad/issues/275.
             // If telemetry is enabled it kinda makes sense to call glFinish so that the telemetry
             // timing is more representative of the time it took to draw. But for general use and
             // in particular when double buffer is used it's not recommended to call glFinish,
             // unless we use SyncObjects or we have to wait for other async operations to finish.
             // See https://wikis.khronos.org/opengl/Common_Mistakes#glFinish_and_glFlush.
-            #[cfg(any(target_arch = "wasm32", target_os = "linux"))]
+            #[cfg(target_os = "linux")]
             if telemetry::is_enabled() {
                 let _z = telemetry::ZoneGuard::new("glFinish/glFLush");
                 unsafe {
@@ -900,7 +862,7 @@ pub mod conf {
         /// With miniquad_conf.platform.blocking_event_loop = true,
         /// next_frame().await will never finish and will wait forever with
         /// zero CPU usage.
-        /// update_on will tell macroquad when to proceed with the event loop.
+        /// update_on will tell rayquad when to proceed with the event loop.
         pub update_on: Option<UpdateTrigger>,
         pub default_filter_mode: crate::FilterMode,
         /// Macroquad performs automatic and static batching for each

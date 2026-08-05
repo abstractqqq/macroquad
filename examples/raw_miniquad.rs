@@ -1,7 +1,10 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-#[macroquad::main("Raw miniquad")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Raw miniquad", game());
+}
+
+async fn game() {
     let stage = {
         let InternalGlContext {
             quad_context: ctx, ..
@@ -26,7 +29,7 @@ async fn main() {
         {
             let mut gl = unsafe { get_internal_gl() };
 
-            // Ensure that macroquad's shapes are not going to be lost
+            // Ensure that rayquad's shapes are not going to be lost
             gl.flush();
 
             let t = get_time();

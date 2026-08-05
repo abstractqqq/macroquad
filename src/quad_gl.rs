@@ -807,7 +807,7 @@ impl QuadGl {
     }
 
     pub fn get_projection_matrix(&self) -> glam::Mat4 {
-        // get_projection_matrix is a way plugins used to get macroquad's current projection
+        // get_projection_matrix is a way plugins used to get rayquad's current projection
         // back in the days when projection was a part of static batcher
         // now it is not, so here we go with this hack
 

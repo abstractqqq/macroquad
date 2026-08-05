@@ -1,7 +1,12 @@
 use std::{future::Future, task::Poll};
 
-#[macroquad::test]
-async fn back_to_the_future() {
+#[test]
+#[ignore = "requires a native display"]
+fn back_to_the_future() {
+    rayquad::Window::new("test", back_to_the_future_async());
+}
+
+async fn back_to_the_future_async() {
     struct Kaboom;
     impl Future for Kaboom {
         type Output = ();

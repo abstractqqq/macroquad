@@ -1,7 +1,12 @@
-use macroquad::{experimental::coroutines::start_coroutine, telemetry, window::next_frame};
+use rayquad::{experimental::coroutines::start_coroutine, telemetry, window::next_frame};
 
-#[macroquad::test]
-async fn coroutine_value() {
+#[test]
+#[ignore = "requires a native display"]
+fn coroutine_value() {
+    rayquad::Window::new("test", coroutine_value_async());
+}
+
+async fn coroutine_value_async() {
     let mut coroutine = start_coroutine(async move {
         next_frame().await;
         1
@@ -17,9 +22,14 @@ async fn coroutine_value() {
     assert_eq!(coroutine.retrieve(), Some(1));
 }
 
-#[macroquad::test]
-async fn coroutine_memory() {
-    use macroquad::prelude::*;
+#[test]
+#[ignore = "requires a native display"]
+fn coroutine_memory() {
+    rayquad::Window::new("test", coroutine_memory_async());
+}
+
+async fn coroutine_memory_async() {
+    use rayquad::prelude::*;
 
     for _ in 0..20 {
         start_coroutine(async move {

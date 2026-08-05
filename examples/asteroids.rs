@@ -1,4 +1,4 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
 const SHIP_HEIGHT: f32 = 25.;
 const SHIP_BASE: f32 = 22.;
@@ -42,8 +42,11 @@ fn wrap_around(v: &Vec2) -> Vec2 {
     vr
 }
 
-#[macroquad::main("Asteroids")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Asteroids", game());
+}
+
+async fn game() {
     let mut ship = Ship {
         pos: Vec2::new(screen_width() / 2., screen_height() / 2.),
         rot: 0.,

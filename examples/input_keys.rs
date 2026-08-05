@@ -1,7 +1,10 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-#[macroquad::main("InputKeys")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("InputKeys", game());
+}
+
+async fn game() {
     let mut x = screen_width() / 2.0;
     let mut y = screen_height() / 2.0;
 

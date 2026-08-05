@@ -1,12 +1,17 @@
 use std::sync::{Arc, Mutex};
 
-use macroquad::prelude::{
+use rayquad::prelude::{
     coroutines::{start_coroutine, wait_seconds},
     next_frame,
 };
 
-#[macroquad::test]
-async fn back_to_the_future_coroutine() {
+#[test]
+#[ignore = "requires a native display"]
+fn back_to_the_future_coroutine() {
+    rayquad::Window::new("test", back_to_the_future_coroutine_async());
+}
+
+async fn back_to_the_future_coroutine_async() {
     struct Player {
         on_ground: bool,
         allow_movement: bool,

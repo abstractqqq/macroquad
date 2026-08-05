@@ -1,12 +1,15 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
 static LOREM: &str = "Lorem ipsum odor amet, consectetuer adipiscing elit. Ultrices nostra volutpat facilisis magna mus. Rhoncus tempor feugiat netus maecenas pretium leo vitae. Eros aliquet maecenas eu diam aliquet varius hac elementum. Sociosqu platea per ultricies vitae praesent mauris nostra ridiculus. Est cursus pulvinar efficitur mus vel leo. Integer et nec eleifend non leo. Lorem rutrum ultrices potenti facilisis hendrerit facilisi metus sit. AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
 
 Intentional newlines
 are preserved.";
 
-#[macroquad::main("Text Wrap")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Text Wrap", game());
+}
+
+async fn game() {
     let font_size = 24;
     loop {
         clear_background(BLACK);

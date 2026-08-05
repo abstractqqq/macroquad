@@ -1,4 +1,4 @@
-use macroquad::{
+use rayquad::{
     experimental::{
         coroutines::{start_coroutine, wait_seconds},
         scene,
@@ -6,8 +6,13 @@ use macroquad::{
     window::next_frame,
 };
 
-#[macroquad::test]
-async fn coroutine_execution_order() {
+#[test]
+#[ignore = "requires a native display"]
+fn coroutine_execution_order() {
+    rayquad::Window::new("test", coroutine_execution_order_async());
+}
+
+async fn coroutine_execution_order_async() {
     start_coroutine(async move {
         println!("a");
         next_frame().await;
@@ -19,8 +24,13 @@ async fn coroutine_execution_order() {
     next_frame().await;
 }
 
-#[macroquad::test]
-async fn coroutine_manual_poll() {
+#[test]
+#[ignore = "requires a native display"]
+fn coroutine_manual_poll() {
+    rayquad::Window::new("test", coroutine_manual_poll_async());
+}
+
+async fn coroutine_manual_poll_async() {
     struct Player {
         state: i32,
     }
@@ -57,8 +67,13 @@ async fn coroutine_manual_poll() {
     assert_eq!(scene::get_node(player).state, 2);
 }
 
-#[macroquad::test]
-async fn coroutine_manual_poll_delay() {
+#[test]
+#[ignore = "requires a native display"]
+fn coroutine_manual_poll_delay() {
+    rayquad::Window::new("test", coroutine_manual_poll_delay_async());
+}
+
+async fn coroutine_manual_poll_delay_async() {
     struct Player {
         state: i32,
     }

@@ -1,16 +1,21 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
 const SAMPLE: &str = "你好，世界！Macroquad 中文字体";
 
-#[macroquad::main("Chinese font sizes")]
-async fn main() {
-    let font = load_ttf_font("examples/chinese.ttf").await.unwrap();
+fn main() {
+    rayquad::Window::new("Chinese font sizes", game());
+}
 
-    // Font atlases use a single base raster size. The requested size is kept
-    // here to make the initialization intent explicit, but cache warming does
-    // not create a separate 32px atlas.
-    let characters: Vec<char> = SAMPLE.chars().collect();
-    font.populate_font_cache(&characters, 32);
+async fn game() {
+    let font = load_ttf_font_ex(
+        "examples/chinese.ttf",
+        FontLoadParams {
+            characters: SAMPLE.chars().collect(),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
 
     let layout_16 = prepare_text_layout(
         SAMPLE,

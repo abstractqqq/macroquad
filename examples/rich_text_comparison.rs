@@ -1,7 +1,7 @@
-use macroquad::{prelude::*, rich_text};
+use rayquad::{prelude::*, rich_text};
 
 const SAMPLE: &str = "AVATAR ffi office\nMacroquad text rendering";
-const LONG_SENTENCE: &str = "Macroquad is a simple and easy-to-use game library for Rust that supports\n desktop, HTML5, Android, and iOS while keeping the application loop pleasantly small.";
+const LONG_SENTENCE: &str = "RayQuad is a compact game library for Rust that supports desktop, Android,\n and iOS while keeping the application loop pleasantly small.";
 const LONG_MULTILINE: &str = "Macroquad is a simple and easy-to-use game library for Rust.\nThis second line compares multiline shaping, glyph caching, atlas lookup,\nand draw-command submission between Swash-only and Parley plus Swash.";
 
 #[derive(Default)]
@@ -25,8 +25,11 @@ impl Average {
     }
 }
 
-#[macroquad::main("Swash-only vs Parley + Swash")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Swash-only vs Parley + Swash", game());
+}
+
+async fn game() {
     let started = get_time();
     let swash_font =
         load_ttf_font_from_bytes(include_bytes!("../assets/fonts/ProggyClean.ttf")).unwrap();

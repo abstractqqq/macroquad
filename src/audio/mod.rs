@@ -37,7 +37,7 @@ mod dummy_audio {
         }
 
         pub fn play(&self, _ctx: &mut AudioContext, _params: PlaySoundParams) {
-            eprintln!("warn: macroquad's \"audio\" feature disabled.");
+            eprintln!("warn: rayquad's \"audio\" feature disabled.");
         }
 
         pub fn stop(&self, _ctx: &mut AudioContext) {}
@@ -120,12 +120,6 @@ pub async fn load_sound_from_bytes(data: &[u8]) -> Result<Sound, Error> {
         let ctx = &mut get_context().audio_context;
         QuadSndSound::load(&mut ctx.native_ctx, data)
     };
-
-    // only on wasm the sound is not ready right away
-    #[cfg(target_arch = "wasm32")]
-    while sound.is_loaded() == false {
-        crate::window::next_frame().await;
-    }
 
     Ok(Sound(Arc::new(QuadSndSoundGuarded(sound))))
 }

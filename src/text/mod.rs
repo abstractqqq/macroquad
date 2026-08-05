@@ -1,8 +1,12 @@
-//! Functions to load immutable fonts, warm text resources, and draw shaped text.
+//! Functions to construct immutable atlas-backed fonts and draw shaped text.
 
 use std::{ops::Range, sync::Arc};
 
-use swash::FontRef;
+use swash::{
+    shape::ShapeContext,
+    text::{Codepoint, Script},
+    FontRef,
+};
 
 use crate::{
     color::{Color, WHITE},
@@ -18,6 +22,8 @@ pub(crate) mod renderer;
 
 use renderer::TextRenderer;
 
+use self::{atlas::Atlas, rasterizer::Rasterizer};
+
 #[derive(Debug, Default, Clone, Copy, PartialEq)]
 pub struct TextDimensions {
     pub width: f32,
@@ -28,6 +34,44 @@ pub struct TextDimensions {
 struct FontData {
     bytes: Arc<[u8]>,
     index: usize,
+    atlas: Option<Atlas>,
+    glyphs: Vec<(u16, GlyphInfo)>,
+    raster_size: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct GlyphInfo {
+    pub(crate) rect: Option<crate::math::Rect>,
+    pub(crate) left: i32,
+    pub(crate) top: i32,
+}
+
+/// Parameters used to construct a complete immutable font atlas.
+#[derive(Debug, Clone)]
+pub struct FontLoadParams {
+    /// Characters whose nominal glyphs will be stored in the atlas.
+    ///
+    /// Setting this field replaces the default ASCII repertoire. Extend
+    /// [`Font::ascii_character_list`] when the font must also render general
+    /// labels, numbers, or dynamically formatted values.
+    pub characters: Vec<char>,
+    /// Complete strings used to collect ligatures and contextual glyph forms.
+    pub texts: Vec<String>,
+    /// Canonical raster size. Drawing scales these cached glyphs.
+    pub raster_size: u16,
+    /// Texture filtering used by the finished atlas.
+    pub filter: miniquad::FilterMode,
+}
+
+impl Default for FontLoadParams {
+    fn default() -> Self {
+        Self {
+            characters: Font::ascii_character_list(),
+            texts: Vec::new(),
+            raster_size: renderer::BASE_FONT_SIZE as u16,
+            filter: miniquad::FilterMode::Linear,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -50,17 +94,98 @@ impl std::fmt::Debug for Font {
 }
 
 impl Font {
-    pub(crate) fn load_from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+    pub(crate) fn load_from_bytes(
+        bytes: &[u8],
+        params: FontLoadParams,
+        ctx: &mut dyn miniquad::RenderingBackend,
+    ) -> Result<Self, Error> {
         let font = FontRef::from_index(bytes, 0).ok_or(Error::FontError(
             "Swash could not parse the supplied font data",
         ))?;
         if font.variations().len() != 0 {
             return Err(Error::FontError("Variable fonts are not supported"));
         }
+        if params.raster_size == 0 {
+            return Err(Error::FontError(
+                "Font raster size must be greater than zero",
+            ));
+        }
+
+        let mut atlas = Atlas::new(ctx, params.filter);
+        let mut glyphs = Vec::new();
+        let mut rasterizer = Rasterizer::new();
+        let mut glyph_ids = Vec::with_capacity(params.characters.len() + 1);
+        glyph_ids.push(0);
+        for character in params.characters {
+            let glyph_id = font.charmap().map(character);
+            if glyph_id != 0 && !glyph_ids.contains(&glyph_id) {
+                glyph_ids.push(glyph_id);
+            }
+        }
+        let mut shape_context = ShapeContext::new();
+        for text in &params.texts {
+            let script = text
+                .chars()
+                .map(Codepoint::script)
+                .find(|script| {
+                    !matches!(script, Script::Common | Script::Inherited | Script::Unknown)
+                })
+                .unwrap_or(Script::Latin);
+            let mut shaper = shape_context
+                .builder(font)
+                .script(script)
+                .size(renderer::BASE_FONT_SIZE)
+                .build();
+            shaper.add_str(text);
+            shaper.shape_with(|cluster| {
+                for glyph in cluster.glyphs {
+                    if !glyph_ids.contains(&glyph.id) {
+                        glyph_ids.push(glyph.id);
+                    }
+                }
+            });
+        }
+        for glyph_id in glyph_ids {
+            let Some(rendered) =
+                rasterizer.rasterize(bytes, 0, glyph_id, params.raster_size as f32)
+            else {
+                continue;
+            };
+            let rect = if rendered.image.width == 0 || rendered.image.height == 0 {
+                None
+            } else {
+                let sprite = atlas.new_unique_id();
+                if !atlas.try_cache_sprite(sprite, rendered.image) {
+                    return Err(Error::FontError(
+                        "The immutable font atlas is too small for the requested characters",
+                    ));
+                }
+                Some(
+                    atlas
+                        .get(sprite)
+                        .expect("newly cached glyph must exist")
+                        .rect,
+                )
+            };
+            glyphs.push((
+                glyph_id,
+                GlyphInfo {
+                    rect,
+                    left: rendered.left,
+                    top: rendered.top,
+                },
+            ));
+        }
+        glyphs.sort_unstable_by_key(|(glyph_id, _)| *glyph_id);
+        atlas.clear_sprite_index();
+        atlas.flush(ctx);
         Ok(Self {
             data: Arc::new(FontData {
                 bytes: Arc::from(bytes),
                 index: 0,
+                atlas: Some(atlas),
+                glyphs,
+                raster_size: params.raster_size as f32,
             }),
         })
     }
@@ -82,12 +207,45 @@ impl Font {
             .expect("font was validated when it was loaded")
     }
 
-    pub(crate) fn ascent(&self, font_size: f32) -> f32 {
-        self.font_ref().metrics(&[]).scale(font_size).ascent
+    pub(crate) fn atlas(&self) -> &Atlas {
+        self.data
+            .atlas
+            .as_ref()
+            .expect("renderable fonts always have an atlas")
     }
 
-    pub(crate) fn descent(&self, font_size: f32) -> f32 {
-        -self.font_ref().metrics(&[]).scale(font_size).descent
+    pub(crate) fn glyph(&self, glyph_id: u16) -> Option<GlyphInfo> {
+        self.data
+            .glyphs
+            .binary_search_by_key(&glyph_id, |(glyph_id, _)| *glyph_id)
+            .ok()
+            .or_else(|| {
+                self.data
+                    .glyphs
+                    .binary_search_by_key(&0, |(glyph_id, _)| *glyph_id)
+                    .ok()
+            })
+            .map(|index| self.data.glyphs[index].1)
+    }
+
+    pub(crate) fn raster_size(&self) -> f32 {
+        self.data.raster_size
+    }
+
+    #[cfg(test)]
+    pub(crate) fn load_for_test(bytes: &[u8]) -> Result<Self, Error> {
+        FontRef::from_index(bytes, 0).ok_or(Error::FontError(
+            "Swash could not parse the supplied font data",
+        ))?;
+        Ok(Self {
+            data: Arc::new(FontData {
+                bytes: Arc::from(bytes),
+                index: 0,
+                atlas: None,
+                glyphs: Vec::new(),
+                raster_size: renderer::BASE_FONT_SIZE,
+            }),
+        })
     }
 
     pub fn ascii_character_list() -> Vec<char> {
@@ -98,21 +256,6 @@ impl Font {
         "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM1234567890!@#$%^&*(){}[].,:"
             .chars()
             .collect()
-    }
-
-    /// Warms nominal glyphs for compatibility with the previous API.
-    ///
-    /// The size is ignored because the immutable atlas uses a single base
-    /// raster size and scales it while drawing.
-    pub fn populate_font_cache(&self, characters: &[char], _size: u16) {
-        warm_font_cache(self, characters);
-    }
-
-    pub fn set_filter(&mut self, filter: miniquad::FilterMode) {
-        let context = get_context();
-        context
-            .text_renderer
-            .set_filter(self, &mut *context.quad_context, filter);
     }
 }
 
@@ -325,57 +468,27 @@ pub fn draw_text_layout_ex(
 }
 
 pub async fn load_ttf_font(path: &str) -> Result<Font, Error> {
+    load_ttf_font_ex(path, FontLoadParams::default()).await
+}
+
+pub async fn load_ttf_font_ex(path: &str, params: FontLoadParams) -> Result<Font, Error> {
     let bytes = load_file(path)
         .await
         .map_err(|_| Error::FontError("The Font file couldn't be loaded"))?;
-    load_ttf_font_from_bytes(&bytes)
+    load_ttf_font_from_bytes_ex(&bytes, params)
 }
 
 pub fn load_ttf_font_from_bytes(bytes: &[u8]) -> Result<Font, Error> {
-    let font = Font::load_from_bytes(bytes)?;
+    load_ttf_font_from_bytes_ex(bytes, FontLoadParams::default())
+}
+
+pub fn load_ttf_font_from_bytes_ex(bytes: &[u8], params: FontLoadParams) -> Result<Font, Error> {
     let context = get_context();
-    context.text_renderer.register_font(
-        &font,
-        &mut *context.quad_context,
-        context.default_filter_mode,
-    );
-    Ok(font)
+    Font::load_from_bytes(bytes, params, &mut *context.quad_context)
 }
 
 pub fn load_default_font() -> Result<Font, Error> {
     load_ttf_font_from_bytes(include_bytes!("../../assets/fonts/ProggyClean.ttf"))
-}
-
-/// Rasterizes nominal glyphs for a known character set into the font atlas.
-pub fn warm_font_cache(font: &Font, characters: &[char]) {
-    let context = get_context();
-    context.text_renderer.warm_characters(font, characters);
-}
-
-/// Shapes text and rasterizes every glyph produced by that text.
-pub fn warm_text_cache(font: &Font, text: impl AsRef<str>) {
-    let context = get_context();
-    context.text_renderer.warm_text(font, text.as_ref());
-}
-
-/// Warms a collection of complete strings, including ligature glyphs.
-pub fn warm_texts_cache<'a>(font: &Font, texts: impl IntoIterator<Item = &'a str>) {
-    let context = get_context();
-    for text in texts {
-        context.text_renderer.warm_text(font, text);
-    }
-}
-
-/// Uploads pending atlas changes and prevents new glyph insertion.
-pub fn freeze_font_cache(font: &Font) {
-    let context = get_context();
-    context
-        .text_renderer
-        .freeze(font, &mut *context.quad_context);
-}
-
-pub fn is_font_cache_frozen(font: &Font) -> bool {
-    get_context().text_renderer.is_frozen(font)
 }
 
 pub fn draw_text(
@@ -564,13 +677,18 @@ pub(crate) struct FontsStorage {
 impl FontsStorage {
     pub(crate) fn new(
         ctx: &mut dyn miniquad::RenderingBackend,
-        text_renderer: &mut TextRenderer,
+        _text_renderer: &mut TextRenderer,
         filter: miniquad::FilterMode,
     ) -> Self {
-        let default_font =
-            Font::load_from_bytes(include_bytes!("../../assets/fonts/ProggyClean.ttf")).unwrap();
-        text_renderer.register_font(&default_font, ctx, filter);
-        text_renderer.warm_characters(&default_font, &Font::ascii_character_list());
+        let default_font = Font::load_from_bytes(
+            include_bytes!("../../assets/fonts/ProggyClean.ttf"),
+            FontLoadParams {
+                filter,
+                ..Default::default()
+            },
+            ctx,
+        )
+        .unwrap();
         Self { default_font }
     }
 }

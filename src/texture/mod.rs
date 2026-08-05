@@ -16,7 +16,7 @@ pub(crate) struct TextureSlotGuarded(pub TextureSlotId);
 
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum TextureHandle {
-    // texture that belongs to macroquad and follows normal garbage collection rules
+    // texture that belongs to rayquad and follows normal garbage collection rules
     Managed(Arc<TextureSlotGuarded>),
     ManagedWeak(TextureSlotId),
     // raw miniquad texture, there are no guarantees that this texture is not yet deleted
@@ -91,7 +91,7 @@ impl Image {
     /// Creates an empty Image.
     ///
     /// ```
-    /// # use macroquad::prelude::*;
+    /// # use rayquad::prelude::*;
     /// let image = Image::empty();
     /// ```
     pub const fn empty() -> Image {
@@ -110,7 +110,7 @@ impl Image {
     /// # Example
     ///
     /// ```
-    /// # use macroquad::prelude::*;
+    /// # use rayquad::prelude::*;
     /// let icon = Image::from_file_with_format(
     ///     include_bytes!("../examples/rust.png"),
     ///     Some(ImageFormat::Png),
@@ -312,7 +312,7 @@ impl Image {
     }
 
     /// Saves this image as a PNG file.
-    /// This method is not supported on web and will panic.
+    /// This method requires a backend that supports reading texture pixels.
     pub fn export_png(&self, path: &str) {
         let mut bytes = vec![0; self.width as usize * self.height as usize * 4];
 
@@ -669,9 +669,9 @@ impl Texture2D {
     ///
     /// # Example
     /// ```
-    /// # use macroquad::prelude::*;
-    /// # #[macroquad::main("test")]
-    /// # async fn main() {
+    /// # use rayquad::prelude::*;
+    /// # fn main() { Window::new("test", game()); }
+    /// # async fn game() {
     /// let texture = Texture2D::empty();
     /// # }
     /// ```
@@ -688,9 +688,9 @@ impl Texture2D {
     ///
     /// # Example
     /// ```
-    /// # use macroquad::prelude::*;
-    /// # #[macroquad::main("test")]
-    /// # async fn main() {
+    /// # use rayquad::prelude::*;
+    /// # fn main() { Window::new("test", game()); }
+    /// # async fn game() {
     /// let texture = Texture2D::from_file_with_format(
     ///     include_bytes!("../examples/rust.png"),
     ///     None,
@@ -733,9 +733,9 @@ impl Texture2D {
     /// # Example
     ///
     /// ```
-    /// # use macroquad::prelude::*;
-    /// # #[macroquad::main("test")]
-    /// # async fn main() {
+    /// # use rayquad::prelude::*;
+    /// # fn main() { Window::new("test", game()); }
+    /// # async fn game() {
     /// // Create a 2x2 texture from a byte slice with 4 rgba pixels
     /// let bytes: Vec<u8> = vec![255, 0, 0, 192, 0, 255, 0, 192, 0, 0, 255, 192, 255, 255, 255, 192];
     /// let texture = Texture2D::from_rgba8(2, 2, &bytes);
@@ -825,9 +825,9 @@ impl Texture2D {
     ///
     /// # Example
     /// ```
-    /// # use macroquad::prelude::*;
-    /// # #[macroquad::main("test")]
-    /// # async fn main() {
+    /// # use rayquad::prelude::*;
+    /// # fn main() { Window::new("test", game()); }
+    /// # async fn game() {
     /// let texture = Texture2D::empty();
     /// texture.set_filter(FilterMode::Linear);
     /// # }
@@ -866,9 +866,6 @@ impl Texture2D {
             TextureFormat::RGBA16F => miniquad::gl::GL_RGBA,
             TextureFormat::Depth => miniquad::gl::GL_DEPTH_COMPONENT,
             TextureFormat::Depth32 => miniquad::gl::GL_DEPTH_COMPONENT,
-            #[cfg(target_arch = "wasm32")]
-            TextureFormat::Alpha => miniquad::gl::GL_ALPHA,
-            #[cfg(not(target_arch = "wasm32"))]
             TextureFormat::Alpha => miniquad::gl::GL_R8,
         };
         unsafe {
@@ -947,21 +944,11 @@ pub fn build_textures_atlas() {
 }
 
 #[doc(hidden)]
-/// Macroquad do not have track of all loaded fonts.
-/// Fonts store their characters as ID's in the atlas.
-/// There fore resetting the atlas will render all fonts unusable.
+/// Resets the general-purpose texture batching atlas.
+///
+/// Immutable font atlases are independent and remain valid.
 pub unsafe fn reset_textures_atlas() {
     let context = get_context();
-    context.text_renderer = crate::text::renderer::TextRenderer::new();
-    #[cfg(feature = "rich-text")]
-    {
-        context.rich_text_renderer = crate::rich_text::RichTextRenderer::new();
-    }
-    context.fonts_storage = crate::text::FontsStorage::new(
-        &mut *context.quad_context,
-        &mut context.text_renderer,
-        context.default_filter_mode,
-    );
     context.texture_batcher = Batcher::new(&mut *context.quad_context);
 }
 

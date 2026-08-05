@@ -1,7 +1,10 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-#[macroquad::main("InputTouch")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("InputTouch", game());
+}
+
+async fn game() {
     loop {
         clear_background(LIGHTGRAY);
 

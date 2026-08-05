@@ -1,4 +1,4 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
 use std::collections::LinkedList;
 
@@ -12,8 +12,11 @@ struct Snake {
     dir: Point,
 }
 
-#[macroquad::main("Snake")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Snake", game());
+}
+
+async fn game() {
     let mut snake = Snake {
         head: (0, 0),
         dir: (1, 0),

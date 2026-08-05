@@ -1,4 +1,4 @@
-//! Special macroquad-friendly collections.
+//! Special rayquad-friendly collections.
 //! The datatypes from this module may help to organize game code.
 
 /// Global persistent storage. Nice for some global game configs available everywhere.

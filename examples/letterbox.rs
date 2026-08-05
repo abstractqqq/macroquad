@@ -1,10 +1,13 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
 const VIRTUAL_WIDTH: f32 = 1280.0;
 const VIRTUAL_HEIGHT: f32 = 720.0;
 
-#[macroquad::main("Letterbox")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Letterbox", game());
+}
+
+async fn game() {
     // Setup 'render_target', used to hold the rendering result so we can resize it
     let render_target = render_target(VIRTUAL_WIDTH as u32, VIRTUAL_HEIGHT as u32);
     render_target.texture.set_filter(FilterMode::Linear);

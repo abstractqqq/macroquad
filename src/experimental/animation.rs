@@ -10,11 +10,14 @@
 //! - Run animation with 15 frames at 15 fps
 //!
 //! ```no_run
-//! use macroquad::experimental::animation::*;
-//! use macroquad::prelude::*;
+//! use rayquad::experimental::animation::*;
+//! use rayquad::prelude::*;
 //!
-//! #[macroquad::main("Animation")]
-//! async fn main() {
+//! fn main() {
+//!     Window::new("Animation", game());
+//! }
+//!
+//! async fn game() {
 //!     // Define animations
 //!     let mut sprite = AnimatedSprite::new(
 //!         15,

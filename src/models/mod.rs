@@ -11,9 +11,9 @@ pub struct Vertex {
     pub position: Vec3,
     pub uv: Vec2,
     pub color: [u8; 4],
-    /// Normal is not used by macroquad and is completely optional.
+    /// Normal is not used by rayquad and is completely optional.
     /// Might be usefull for custom shaders.
-    /// While normal is not used by macroquad, it is completely safe to use it
+    /// While normal is not used by rayquad, it is completely safe to use it
     /// to pass arbitary user data, hence Vec4.
     pub normal: Vec4,
 }
@@ -145,7 +145,7 @@ pub fn draw_plane(center: Vec3, size: Vec2, texture: Option<&Texture2D>, color: 
 ///
 /// Draw an axis aligned rectangle
 /// ```no_run
-/// # use macroquad::prelude::*;
+/// # use rayquad::prelude::*;
 /// draw_affine_parallelogram(Vec3::ZERO, 3. * Vec3::X, 5. * Vec3::Z, None, RED);
 /// ```
 pub fn draw_affine_parallelogram(
@@ -190,7 +190,7 @@ pub fn draw_affine_parallelogram(
 ///
 /// Draw an axis aligned cube
 /// ```no_run
-/// # use macroquad::prelude::*;
+/// # use rayquad::prelude::*;
 /// draw_affine_parallelepiped(Vec3::ZERO, 3. * Vec3::X, 2. * Vec3::Y, 5. * Vec3::Z, None, RED);
 /// ```
 pub fn draw_affine_parallelepiped(

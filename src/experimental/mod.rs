@@ -1,4 +1,4 @@
-//! The most unstable things in macroquad
+//! The most unstable things in rayquad
 //! Some of them will eventually move to other modules,
 //! some will move into separate crates and some may just disappear.
 

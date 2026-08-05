@@ -1,7 +1,10 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-#[macroquad::main("Texture")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Texture", game());
+}
+
+async fn game() {
     let texture: Texture2D = load_texture("examples/chess.png").await.unwrap();
 
     let lens_material = load_material(

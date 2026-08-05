@@ -3,7 +3,7 @@
 use crate::{exec, Error};
 
 /// Load file from the path and block until its loaded
-/// Will use filesystem on PC and do http request on web
+/// Loads a file through the platform filesystem.
 pub async fn load_file(path: &str) -> Result<Vec<u8>, Error> {
     fn load_file_inner(path: &str) -> exec::FileLoadingFuture {
         use std::sync::{Arc, Mutex};
@@ -59,7 +59,7 @@ pub async fn load_string(path: &str) -> Result<String, Error> {
 /// ```
 /// when such a project being run on desktop assets should be referenced as
 /// "assets/nice_texture.png".
-/// While on web or android it usually is just "nice_texture.png".
+/// On Android it is usually just "nice_texture.png".
 /// The reason: on PC assets are being referenced relative to current active directory/executable path. In most IDEs its the root of the project.
 /// While on, say, android it is:
 /// ```skip

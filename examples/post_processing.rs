@@ -1,7 +1,10 @@
-use macroquad::prelude::*;
+use rayquad::prelude::*;
 
-#[macroquad::main("Post processing")]
-async fn main() {
+fn main() {
+    rayquad::Window::new("Post processing", game());
+}
+
+async fn game() {
     let render_target = render_target(320, 150);
     render_target.texture.set_filter(FilterMode::Nearest);
 

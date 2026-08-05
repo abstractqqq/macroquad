@@ -1,4 +1,4 @@
-use macroquad::{prelude::*, rich_text};
+use rayquad::{prelude::*, rich_text};
 
 const CHINESE: &str =
     "任务更新: a宏观四方是一个简单易用的 Rust 游戏引擎，支持桌面、网页、\n安卓和苹果平台。中文字体渲染性能测试。";
@@ -37,16 +37,45 @@ fn window_conf() -> Conf {
     }
 }
 
-#[macroquad::main(window_conf)]
-async fn main() {
+fn main() {
+    rayquad::Window::from_config(window_conf(), game());
+}
+
+async fn game() {
     let font_bytes = include_bytes!("chinese.ttf");
+    let sample_texts = [
+        CHINESE,
+        CHINESE_MULTILINE,
+        COLORED_PREFIX,
+        COLORED_BLUE,
+        COLORED_SUFFIX,
+    ];
+    let mut characters = Font::ascii_character_list();
+    characters.extend(sample_texts.concat().chars());
+    let texts = sample_texts.map(str::to_owned).to_vec();
 
     let started = get_time();
-    let swash_font = load_ttf_font_from_bytes(font_bytes).unwrap();
+    let swash_font = load_ttf_font_from_bytes_ex(
+        font_bytes,
+        FontLoadParams {
+            characters: characters.clone(),
+            texts: texts.clone(),
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let swash_load_us = (get_time() - started) * 1_000_000.0;
     set_default_font(swash_font.clone());
     let started = get_time();
-    let rich_font = rich_text::load_ttf_font_from_bytes(font_bytes).unwrap();
+    let rich_font = rich_text::load_ttf_font_from_bytes_ex(
+        font_bytes,
+        FontLoadParams {
+            characters,
+            texts,
+            ..Default::default()
+        },
+    )
+    .unwrap();
     let rich_load_us = (get_time() - started) * 1_000_000.0;
 
     let mut draw_average = Average::default();
@@ -190,7 +219,7 @@ async fn main() {
         }
 
         draw_text(
-            "First draw includes Chinese glyph rasterization and atlas upload; rolling averages approach the cached path.",
+            "Fonts are rasterized and uploaded during loading; drawing only shapes text and submits cached glyphs.",
             24.0,
             screen_height() - 44.0,
             19.0,

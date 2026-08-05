@@ -14,20 +14,9 @@ use crate::{
     texture::Texture2D,
 };
 
-use super::{
-    atlas::{Atlas, SpriteKey},
-    rasterizer::Rasterizer,
-    Font, FontId, TextDimensions,
-};
+use super::{Font, FontId, TextDimensions};
 
 pub(crate) const BASE_FONT_SIZE: f32 = 32.0;
-
-#[derive(Debug, Clone, Copy)]
-struct GlyphInfo {
-    sprite: Option<SpriteKey>,
-    left: i32,
-    top: i32,
-}
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PositionedGlyph {
@@ -46,12 +35,6 @@ pub(crate) struct ShapedText {
     pub(crate) glyphs: Vec<PositionedGlyph>,
     pub(crate) clusters: Vec<ShapedCluster>,
     pub(crate) dimensions: TextDimensions,
-}
-
-struct RenderFont {
-    atlas: Atlas,
-    glyphs: HashMap<u16, GlyphInfo>,
-    frozen: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -153,8 +136,6 @@ impl LayoutCache {
 
 pub(crate) struct TextRenderer {
     shape_context: ShapeContext,
-    rasterizer: Rasterizer,
-    fonts: HashMap<FontId, RenderFont>,
     layouts: LayoutCache,
 }
 
@@ -162,41 +143,7 @@ impl TextRenderer {
     pub(crate) fn new() -> Self {
         Self {
             shape_context: ShapeContext::new(),
-            rasterizer: Rasterizer::new(),
-            fonts: HashMap::new(),
             layouts: LayoutCache::new(),
-        }
-    }
-
-    pub(crate) fn register_font(
-        &mut self,
-        font: &Font,
-        ctx: &mut dyn miniquad::RenderingBackend,
-        filter: miniquad::FilterMode,
-    ) {
-        if self.fonts.contains_key(&font.id()) {
-            return;
-        }
-        let mut atlas = Atlas::new(ctx, filter);
-        atlas.set_filter_with(ctx, filter);
-        self.fonts.insert(
-            font.id(),
-            RenderFont {
-                atlas,
-                glyphs: HashMap::new(),
-                frozen: false,
-            },
-        );
-    }
-
-    pub(crate) fn set_filter(
-        &mut self,
-        font: &Font,
-        ctx: &mut dyn miniquad::RenderingBackend,
-        filter: miniquad::FilterMode,
-    ) {
-        if let Some(render_font) = self.fonts.get_mut(&font.id()) {
-            render_font.atlas.set_filter_with(ctx, filter);
         }
     }
 
@@ -304,68 +251,6 @@ impl TextRenderer {
         shaped
     }
 
-    fn ensure_glyph(&mut self, font: &Font, glyph_id: u16) -> bool {
-        let Some(render_font) = self.fonts.get_mut(&font.id()) else {
-            return false;
-        };
-        if render_font.glyphs.contains_key(&glyph_id) {
-            return true;
-        }
-        if render_font.frozen {
-            return false;
-        }
-        let Some(rendered) =
-            self.rasterizer
-                .rasterize(font.bytes(), font.index(), glyph_id, BASE_FONT_SIZE)
-        else {
-            return false;
-        };
-        let sprite = if rendered.image.width == 0 || rendered.image.height == 0 {
-            None
-        } else {
-            let sprite = render_font.atlas.new_unique_id();
-            render_font.atlas.cache_sprite(sprite, rendered.image);
-            Some(sprite)
-        };
-        render_font.glyphs.insert(
-            glyph_id,
-            GlyphInfo {
-                sprite,
-                left: rendered.left,
-                top: rendered.top,
-            },
-        );
-        true
-    }
-
-    pub(crate) fn warm_text(&mut self, font: &Font, text: &str) {
-        let shaped = self.shape(font, text, None);
-        for glyph in &shaped.glyphs {
-            self.ensure_glyph(font, glyph.glyph_id);
-        }
-    }
-
-    pub(crate) fn warm_characters(&mut self, font: &Font, characters: &[char]) {
-        for character in characters {
-            let mut buffer = [0; 4];
-            self.warm_text(font, character.encode_utf8(&mut buffer));
-        }
-    }
-
-    pub(crate) fn freeze(&mut self, font: &Font, ctx: &mut dyn miniquad::RenderingBackend) {
-        self.ensure_glyph(font, 0);
-        if let Some(render_font) = self.fonts.get_mut(&font.id()) {
-            render_font.atlas.flush(ctx);
-            render_font.frozen = true;
-        }
-    }
-
-    pub(crate) fn is_frozen(&self, font: &Font) -> bool {
-        self.fonts
-            .get(&font.id())
-            .is_some_and(|render_font| render_font.frozen)
-    }
-
     pub(crate) fn measure(
         &mut self,
         font: &Font,
@@ -431,27 +316,16 @@ impl TextRenderer {
         cluster_colors: Option<&[Option<Color>]>,
         visible_clusters: usize,
         gl: &mut QuadGl,
-        backend: &mut dyn miniquad::RenderingBackend,
+        _backend: &mut dyn miniquad::RenderingBackend,
     ) -> TextDimensions {
         let visible_clusters = visible_clusters.min(shaped.clusters.len());
-        let visible_glyphs = shaped
-            .clusters
-            .get(..visible_clusters)
-            .and_then(|clusters| clusters.last())
-            .map_or(0, |cluster| cluster.glyphs.end);
-        for glyph in &shaped.glyphs[..visible_glyphs] {
-            self.ensure_glyph(font, glyph.glyph_id);
-        }
-
-        let Some(render_font) = self.fonts.get_mut(&font.id()) else {
-            return TextDimensions::default();
-        };
-        render_font.atlas.flush(backend);
-        let texture = Texture2D::unmanaged(render_font.atlas.texture_id());
-        let (atlas_width, atlas_height) = render_font.atlas.image_size();
-        let base_scale = requested_pixel_size / BASE_FONT_SIZE;
-        let draw_scale_x = base_scale * scale_x;
-        let draw_scale_y = base_scale * scale_y;
+        let atlas = font.atlas();
+        let texture = Texture2D::unmanaged(atlas.texture_id());
+        let (atlas_width, atlas_height) = atlas.image_size();
+        let layout_scale_x = requested_pixel_size / BASE_FONT_SIZE * scale_x;
+        let layout_scale_y = requested_pixel_size / BASE_FONT_SIZE * scale_y;
+        let image_scale_x = requested_pixel_size / font.raster_size() * scale_x;
+        let image_scale_y = requested_pixel_size / font.raster_size() * scale_y;
         let cos = rotation.cos();
         let sin = rotation.sin();
         let indices = [0, 1, 2, 0, 2, 3];
@@ -465,25 +339,18 @@ impl TextRenderer {
                 .flatten()
                 .unwrap_or(color);
             for glyph in &shaped.glyphs[cluster.glyphs.clone()] {
-                let Some(info) = render_font
-                    .glyphs
-                    .get(&glyph.glyph_id)
-                    .or_else(|| render_font.glyphs.get(&0))
-                else {
+                let Some(info) = font.glyph(glyph.glyph_id) else {
                     continue;
                 };
-                let Some(sprite_key) = info.sprite else {
+                let Some(rect) = info.rect else {
                     continue;
                 };
-                let Some(sprite) = render_font.atlas.get(sprite_key) else {
-                    continue;
-                };
-                let logical_x = (glyph.x + info.left as f32) * draw_scale_x;
-                let logical_y = (glyph.y - info.top as f32) * draw_scale_y;
+                let logical_x = glyph.x * layout_scale_x + info.left as f32 * image_scale_x;
+                let logical_y = glyph.y * layout_scale_y - info.top as f32 * image_scale_y;
                 let dest_x = x + logical_x * cos - logical_y * sin;
                 let dest_y = y + logical_x * sin + logical_y * cos;
-                let width = sprite.rect.w * draw_scale_x;
-                let height = sprite.rect.h * draw_scale_y;
+                let width = rect.w * image_scale_x;
+                let height = rect.h * image_scale_y;
                 let p = [
                     vec2(dest_x, dest_y),
                     vec2(dest_x + width * cos, dest_y + width * sin),
@@ -493,10 +360,10 @@ impl TextRenderer {
                     ),
                     vec2(dest_x - height * sin, dest_y + height * cos),
                 ];
-                let sx = sprite.rect.x / atlas_width;
-                let sy = sprite.rect.y / atlas_height;
-                let sw = sprite.rect.w / atlas_width;
-                let sh = sprite.rect.h / atlas_height;
+                let sx = rect.x / atlas_width;
+                let sy = rect.y / atlas_height;
+                let sw = rect.w / atlas_width;
+                let sh = rect.h / atlas_height;
                 let vertices = [
                     Vertex::new(p[0].x, p[0].y, 0.0, sx, sy, cluster_color),
                     Vertex::new(p[1].x, p[1].y, 0.0, sx + sw, sy, cluster_color),
@@ -508,9 +375,9 @@ impl TextRenderer {
         }
 
         TextDimensions {
-            width: shaped.dimensions.width * draw_scale_x,
-            height: shaped.dimensions.height * draw_scale_y,
-            offset_y: shaped.dimensions.offset_y * draw_scale_y,
+            width: shaped.dimensions.width * layout_scale_x,
+            height: shaped.dimensions.height * layout_scale_y,
+            offset_y: shaped.dimensions.offset_y * layout_scale_y,
         }
     }
 }
@@ -520,7 +387,7 @@ mod tests {
     use super::*;
 
     fn test_font() -> Font {
-        Font::load_from_bytes(include_bytes!("../../assets/fonts/ProggyClean.ttf")).unwrap()
+        Font::load_for_test(include_bytes!("../../assets/fonts/ProggyClean.ttf")).unwrap()
     }
 
     #[test]

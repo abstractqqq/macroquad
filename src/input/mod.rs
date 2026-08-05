@@ -478,13 +478,6 @@ pub fn get_char_pressed() -> Option<char> {
     context.chars_pressed_queue.pop_front()
 }
 
-#[cfg(feature = "ui")]
-pub(crate) fn get_char_pressed_ui() -> Option<char> {
-    let context = get_context();
-
-    context.chars_pressed_ui_queue.pop_front()
-}
-
 /// Return the last key pressed during this frame.
 pub fn last_key_pressed() -> Option<KeyCode> {
     let context = get_context();
@@ -513,8 +506,6 @@ pub fn keys_released() -> Vec<KeyCode> {
 pub fn clear_input_queue() {
     let context = get_context();
     context.chars_pressed_queue.clear();
-    #[cfg(feature = "ui")]
-    context.chars_pressed_ui_queue.clear();
     context.mouse_buttons.clear_pressed();
     context.keyboard.clear_pressed();
 }

@@ -32,7 +32,7 @@ impl std::fmt::Display for Error {
             Error::DeJsonErr { .. } | Error::TextureNotFound {..} => std::fmt::Debug::fmt(self, f),
             Error::NonUniqueLayerName { layer } => write!(
                 f,
-                "Layer name should be unique to load tiled level in macroquad, non-unique layer name: {}", layer
+                "Layer name should be unique to load tiled level in rayquad, non-unique layer name: {}", layer
             ),
             Error::LayerTypeNotFound{layer_type} => write!(
                 f,
