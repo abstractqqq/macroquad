@@ -1,7 +1,7 @@
 [package]
 name = "rayquad"
 version = "0.1.0"
-authors = ["not-fl3 <not.fl3@gmail.com>"]
+authors = ["abstractqqq <qtren2015@gmail.com>"]
 edition = "2021"
 description = """
 An opinionated, Raylib-like fork of Macroquad
@@ -29,16 +29,13 @@ all-features = true
 miniquad = { version = "=0.4.11", features = ["log-impl"] }
 quad-rand = "0.2.3"
 glam = { version = "0.27", features = ["scalar-math"] }
-image = { version = "0.24", default-features = false, features = ["png", "tga"] }
+image = { version = "0.24", default-features = false, features = ["png"] }
 foldhash = "0.2"
 parley = { version = "0.11", optional = true, default-features = false, features = ["std"] }
 swash = "0.2"
 backtrace = { version = "0.3.60", optional = true }
 log = { version = "0.4", optional = true }
 quad-snd = { version = "0.2", optional = true }
-
-[dev-dependencies]
-rayquad-tiled = { path = "./tiled" }
 
 [[example]]
 name = "rich_text_comparison"
@@ -54,8 +51,3 @@ required-features = ["rich-text"]
 # this allows companion crates in examples without two versions of rayquad
 [patch.crates-io]
 rayquad = { path = './' }
-
-#quad-snd = {path = '../quad-snd'}
-#miniquad = { path = '../miniquad' }
-#miniquad = { git = "https://github.com/not-fl3/miniquad", branch = "msaa_render_texture" }
-#quad-gl = {path = './quad-gl'}

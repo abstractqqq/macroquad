@@ -1,4 +1,5 @@
 //! Contains the slot map implementation.
+//! Copied from the Slotmap crate.
 
 use alloc::collections::TryReserveError;
 use alloc::vec::Vec;

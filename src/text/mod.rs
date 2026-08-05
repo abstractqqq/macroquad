@@ -242,13 +242,27 @@ impl Font {
     }
 
     pub fn ascii_character_list() -> Vec<char> {
-        (0..255).filter_map(char::from_u32).collect()
+        (' '..='~').collect()
     }
 
     pub fn latin_character_list() -> Vec<char> {
         "qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM1234567890!@#$%^&*(){}[].,:"
             .chars()
             .collect()
+    }
+}
+
+#[cfg(test)]
+mod font_tests {
+    use super::Font;
+
+    #[test]
+    fn ascii_character_list_is_the_printable_ascii_repertoire() {
+        let characters = Font::ascii_character_list();
+
+        assert_eq!(characters.len(), 95);
+        assert_eq!(characters.first(), Some(&' '));
+        assert_eq!(characters.last(), Some(&'~'));
     }
 }
 
