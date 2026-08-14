@@ -49,8 +49,8 @@ use std::pin::Pin;
 
 mod exec;
 mod quad_gl;
-#[allow(dead_code, private_bounds)]
-mod slotmap;
+#[allow(dead_code)]
+pub mod slotmap;
 mod tobytes;
 
 pub mod audio;

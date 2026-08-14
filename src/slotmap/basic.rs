@@ -140,7 +140,7 @@ impl<V> SlotMap<DefaultKey, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm: SlotMap<_, i32> = SlotMap::new();
     /// ```
     pub fn new() -> Self {
@@ -155,7 +155,7 @@ impl<V> SlotMap<DefaultKey, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm: SlotMap<_, i32> = SlotMap::with_capacity(10);
     /// ```
     pub fn with_capacity(capacity: usize) -> Self {
@@ -169,7 +169,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// new_key_type! {
     ///     struct PositionKey;
     /// }
@@ -188,7 +188,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// new_key_type! {
     ///     struct MessageKey;
     /// }
@@ -221,7 +221,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::with_capacity(10);
     /// sm.insert("len() counts actual elements, not capacity");
     /// let key = sm.insert("removed elements don't count either");
@@ -237,7 +237,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.insert("dummy");
     /// assert_eq!(sm.is_empty(), false);
@@ -254,7 +254,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let sm: SlotMap<_, f64> = SlotMap::with_capacity(10);
     /// assert_eq!(sm.capacity(), 10);
     /// ```
@@ -274,7 +274,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// sm.insert("foo");
     /// sm.reserve(32);
@@ -293,7 +293,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// sm.insert("foo");
     /// sm.try_reserve(32).unwrap();
@@ -310,7 +310,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.insert(42);
     /// assert_eq!(sm.contains_key(key), true);
@@ -334,7 +334,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.insert(42);
     /// assert_eq!(sm[key], 42);
@@ -356,7 +356,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.insert_with_key(|k| (k, 20));
     /// assert_eq!(sm[key], (key, 20));
@@ -383,7 +383,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.try_insert_with_key::<_, ()>(|k| Ok((k, 20))).unwrap();
     /// assert_eq!(sm[key], (key, 20));
@@ -454,7 +454,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.insert(42);
     /// assert_eq!(sm.remove(key), Some(42));
@@ -484,7 +484,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.insert(42);
     /// assert_eq!(sm.detach(key), Some(42));
@@ -520,7 +520,7 @@ impl<K: Key, V> SlotMap<K, V> {
     ///
     /// # Examples
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.insert(42);
     /// assert_eq!(sm.detach(key), Some(42));
@@ -558,7 +558,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     ///
     /// let k1 = sm.insert(0);
@@ -604,7 +604,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// for i in 0..10 {
     ///     sm.insert(i);
@@ -631,7 +631,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let k = sm.insert(0);
     /// let v: Vec<_> = sm.drain().collect();
@@ -647,7 +647,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.insert("bar");
     /// assert_eq!(sm.get(key), Some(&"bar"));
@@ -673,7 +673,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.insert("bar");
     /// assert_eq!(unsafe { sm.get_unchecked(key) }, &"bar");
@@ -690,7 +690,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.insert(3.5);
     /// if let Some(x) = sm.get_mut(key) {
@@ -717,7 +717,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let key = sm.insert("foo");
     /// unsafe { *sm.get_unchecked_mut(key) = "bar" };
@@ -742,7 +742,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let ka = sm.insert("butter");
     /// let kb = sm.insert("apples");
@@ -806,7 +806,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let ka = sm.insert("butter");
     /// let kb = sm.insert("apples");
@@ -835,7 +835,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let k0 = sm.insert(0);
     /// let k1 = sm.insert(1);
@@ -865,7 +865,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// let mut sm = SlotMap::new();
     /// let k0 = sm.insert(10);
     /// let k1 = sm.insert(20);
@@ -901,7 +901,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// # use std::collections::HashSet;
     /// let mut sm = SlotMap::new();
     /// let k0 = sm.insert(10);
@@ -924,7 +924,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// # use std::collections::HashSet;
     /// let mut sm = SlotMap::new();
     /// let k0 = sm.insert(10);
@@ -947,7 +947,7 @@ impl<K: Key, V> SlotMap<K, V> {
     /// # Examples
     ///
     /// ```
-    /// # use slotmap::*;
+    /// # use rayquad::slotmap::*;
     /// # use std::collections::HashSet;
     /// let mut sm = SlotMap::new();
     /// sm.insert(1);

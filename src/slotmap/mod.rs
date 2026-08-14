@@ -9,11 +9,45 @@ use core::fmt::{self, Debug, Formatter};
 use core::hash::{Hash, Hasher};
 use core::num::NonZeroU32;
 
-pub(crate) use basic::SlotMap;
+pub use crate::new_key_type;
+pub use basic::{Drain, IntoIter, Iter, IterMut, Keys, SlotMap, Values, ValuesMut};
+
+/// Creates one or more strongly typed slot map key types.
+///
+/// Each declaration accepts attributes and visibility, and the generated key
+/// implements [`Key`].
+#[macro_export]
+macro_rules! new_key_type {
+    () => {};
+    (
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident;
+        $($rest:tt)*
+    ) => {
+        $(#[$meta])*
+        #[derive(Copy, Clone, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
+        #[repr(transparent)]
+        $vis struct $name($crate::slotmap::KeyData);
+
+        impl From<$crate::slotmap::KeyData> for $name {
+            fn from(key: $crate::slotmap::KeyData) -> Self {
+                Self(key)
+            }
+        }
+
+        unsafe impl $crate::slotmap::Key for $name {
+            fn data(&self) -> $crate::slotmap::KeyData {
+                self.0
+            }
+        }
+
+        $crate::new_key_type! { $($rest)* }
+    };
+}
 
 /// The actual data stored in a key.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct KeyData {
+pub struct KeyData {
     idx: u32,
     version: NonZeroU32,
 }
@@ -36,11 +70,11 @@ impl KeyData {
         self.idx == u32::MAX
     }
 
-    pub(crate) fn as_ffi(self) -> u64 {
+    pub fn as_ffi(self) -> u64 {
         (u64::from(self.version.get()) << 32) | u64::from(self.idx)
     }
 
-    pub(crate) const fn from_ffi(value: u64) -> Self {
+    pub const fn from_ffi(value: u64) -> Self {
         let idx = value & 0xffff_ffff;
         let version = (value >> 32) | 1;
         Self::new(idx as u32, version as u32)
@@ -69,7 +103,7 @@ impl Hash for KeyData {
     }
 }
 
-pub(crate) unsafe trait Key:
+pub unsafe trait Key:
     From<KeyData>
     + Copy
     + Clone
@@ -94,7 +128,7 @@ pub(crate) unsafe trait Key:
 
 #[derive(Copy, Clone, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 #[repr(transparent)]
-pub(crate) struct DefaultKey(KeyData);
+pub struct DefaultKey(KeyData);
 
 impl From<KeyData> for DefaultKey {
     fn from(k: KeyData) -> Self {
