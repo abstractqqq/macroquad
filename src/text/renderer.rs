@@ -18,22 +18,22 @@ use super::{Font, FontId, TextDimensions};
 pub(crate) const BASE_FONT_SIZE: f32 = 32.0;
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct PositionedGlyph {
-    pub(crate) glyph_id: u16,
-    pub(crate) x: f32,
-    pub(crate) y: f32,
+pub struct PositionedGlyph {
+    pub glyph_id: u16,
+    pub x: f32,
+    pub y: f32,
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct ShapedCluster {
-    pub(crate) source: Range<usize>,
-    pub(crate) glyphs: Range<usize>,
+pub struct ShapedCluster {
+    pub source: Range<usize>,
+    pub glyphs: Range<usize>,
 }
 
-pub(crate) struct ShapedText {
-    pub(crate) glyphs: Vec<PositionedGlyph>,
-    pub(crate) clusters: Vec<ShapedCluster>,
-    pub(crate) dimensions: TextDimensions,
+pub struct ShapedText {
+    pub glyphs: Vec<PositionedGlyph>,
+    pub clusters: Vec<ShapedCluster>,
+    pub dimensions: TextDimensions,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

@@ -47,8 +47,8 @@ use std::future::Future;
 use std::panic::AssertUnwindSafe;
 use std::pin::Pin;
 
-mod exec;
-mod quad_gl;
+pub mod exec;
+pub mod quad_gl;
 #[allow(dead_code)]
 pub mod slotmap;
 mod tobytes;
@@ -410,8 +410,6 @@ impl Context {
     }
 
     fn end_frame(&mut self) {
-        crate::experimental::scene::update();
-
         self.perform_render_passes();
 
         let screen_mat = self.pixel_perfect_projection_matrix();

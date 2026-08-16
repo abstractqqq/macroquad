@@ -13,25 +13,25 @@ use super::util::{Never, PanicOnDrop, UnwrapNever};
 use super::{DefaultKey, Key, KeyData};
 
 // Storage inside a slot or metadata for the freelist when vacant.
-union SlotUnion<T> {
-    value: ManuallyDrop<T>,
-    next_free: u32,
+pub union SlotUnion<T> {
+    pub value: ManuallyDrop<T>,
+    pub next_free: u32,
 }
 
 // A slot, which represents storage for a value and a current version.
 // Can be occupied or vacant.
-struct Slot<T> {
-    u: SlotUnion<T>,
-    version: u32, // Even = vacant, odd = occupied.
+pub struct Slot<T> {
+    pub u: SlotUnion<T>,
+    pub version: u32, // Even = vacant, odd = occupied.
 }
 
 // Safe API to read a slot.
-enum SlotContent<'a, T: 'a> {
+pub enum SlotContent<'a, T: 'a> {
     Occupied(&'a T),
     Vacant(&'a u32),
 }
 
-enum SlotContentMut<'a, T: 'a> {
+pub enum SlotContentMut<'a, T: 'a> {
     OccupiedMut(&'a mut T),
     VacantMut(&'a mut u32),
 }
@@ -128,10 +128,10 @@ impl<T: fmt::Debug> fmt::Debug for Slot<T> {
 /// See [crate documentation](crate) for more details.
 #[derive(Debug)]
 pub struct SlotMap<K: Key, V> {
-    slots: Vec<Slot<V>>,
-    free_head: u32,
-    num_elems: u32,
-    _k: PhantomData<fn(K) -> K>,
+    pub slots: Vec<Slot<V>>,
+    pub free_head: u32,
+    pub num_elems: u32,
+    pub _k: PhantomData<fn(K) -> K>,
 }
 
 impl<V> SlotMap<DefaultKey, V> {
@@ -1019,8 +1019,8 @@ impl<K: Key, V> IndexMut<K> for SlotMap<K, V> {
 /// This iterator is created by [`SlotMap::drain`].
 #[derive(Debug)]
 pub struct Drain<'a, K: 'a + Key, V: 'a> {
-    sm: &'a mut SlotMap<K, V>,
-    cur: usize,
+    pub sm: &'a mut SlotMap<K, V>,
+    pub cur: usize,
 }
 
 /// An iterator that moves key-value pairs out of a [`SlotMap`].
@@ -1029,9 +1029,9 @@ pub struct Drain<'a, K: 'a + Key, V: 'a> {
 /// provided by the [`IntoIterator`] trait.
 #[derive(Debug, Clone)]
 pub struct IntoIter<K: Key, V> {
-    num_left: usize,
-    slots: Enumerate<alloc::vec::IntoIter<Slot<V>>>,
-    _k: PhantomData<fn(K) -> K>,
+    pub num_left: usize,
+    pub slots: Enumerate<alloc::vec::IntoIter<Slot<V>>>,
+    pub _k: PhantomData<fn(K) -> K>,
 }
 
 /// An iterator over the key-value pairs in a [`SlotMap`].
@@ -1039,9 +1039,9 @@ pub struct IntoIter<K: Key, V> {
 /// This iterator is created by [`SlotMap::iter`].
 #[derive(Debug)]
 pub struct Iter<'a, K: 'a + Key, V: 'a> {
-    num_left: usize,
-    slots: Enumerate<core::slice::Iter<'a, Slot<V>>>,
-    _k: PhantomData<fn(K) -> K>,
+    pub num_left: usize,
+    pub slots: Enumerate<core::slice::Iter<'a, Slot<V>>>,
+    pub _k: PhantomData<fn(K) -> K>,
 }
 
 impl<'a, K: 'a + Key, V: 'a> Clone for Iter<'a, K, V> {
@@ -1059,9 +1059,9 @@ impl<'a, K: 'a + Key, V: 'a> Clone for Iter<'a, K, V> {
 /// This iterator is created by [`SlotMap::iter_mut`].
 #[derive(Debug)]
 pub struct IterMut<'a, K: 'a + Key, V: 'a> {
-    num_left: usize,
-    slots: Enumerate<core::slice::IterMut<'a, Slot<V>>>,
-    _k: PhantomData<fn(K) -> K>,
+    pub num_left: usize,
+    pub slots: Enumerate<core::slice::IterMut<'a, Slot<V>>>,
+    pub _k: PhantomData<fn(K) -> K>,
 }
 
 /// An iterator over the keys in a [`SlotMap`].
@@ -1069,7 +1069,7 @@ pub struct IterMut<'a, K: 'a + Key, V: 'a> {
 /// This iterator is created by [`SlotMap::keys`].
 #[derive(Debug)]
 pub struct Keys<'a, K: 'a + Key, V: 'a> {
-    inner: Iter<'a, K, V>,
+    pub inner: Iter<'a, K, V>,
 }
 
 impl<'a, K: 'a + Key, V: 'a> Clone for Keys<'a, K, V> {
@@ -1085,7 +1085,7 @@ impl<'a, K: 'a + Key, V: 'a> Clone for Keys<'a, K, V> {
 /// This iterator is created by [`SlotMap::values`].
 #[derive(Debug)]
 pub struct Values<'a, K: 'a + Key, V: 'a> {
-    inner: Iter<'a, K, V>,
+    pub inner: Iter<'a, K, V>,
 }
 
 impl<'a, K: 'a + Key, V: 'a> Clone for Values<'a, K, V> {
@@ -1101,7 +1101,7 @@ impl<'a, K: 'a + Key, V: 'a> Clone for Values<'a, K, V> {
 /// This iterator is created by [`SlotMap::values_mut`].
 #[derive(Debug)]
 pub struct ValuesMut<'a, K: 'a + Key, V: 'a> {
-    inner: IterMut<'a, K, V>,
+    pub inner: IterMut<'a, K, V>,
 }
 
 impl<'a, K: Key, V> Iterator for Drain<'a, K, V> {

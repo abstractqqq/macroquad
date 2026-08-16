@@ -28,7 +28,7 @@ pub struct Zone {
     pub duration: f64,
     pub children: Vec<Zone>,
 
-    parent: *mut Zone,
+    pub parent: *mut Zone,
 }
 
 impl Zone {
@@ -48,7 +48,7 @@ impl Zone {
 }
 
 pub struct ZoneGuard {
-    _marker: (),
+    pub _marker: (),
 }
 
 impl ZoneGuard {
@@ -145,7 +145,7 @@ pub(crate) fn reset() {
 pub struct Frame {
     pub full_frame_time: f32,
     pub zones: Vec<Zone>,
-    active_zone: *mut Zone,
+    pub active_zone: *mut Zone,
 }
 
 impl Frame {
@@ -283,12 +283,6 @@ pub struct GpuQuery {
     pub force_resume: bool,
 }
 
-pub fn scene_allocated_memory() -> usize {
-    use crate::experimental::scene;
-
-    scene::allocated_memory()
-}
-
 /// ```skip
 /// {
 ///    let _t = telemetry::LogTimeGuard::new("Atlas build time");
@@ -298,8 +292,8 @@ pub fn scene_allocated_memory() -> usize {
 /// Will add "Time query: Atlas build time, 0.5s" string to
 /// `telemetry::strings()`
 pub struct LogTimeGuard<'a> {
-    name: &'a str,
-    start_time: f64,
+    pub name: &'a str,
+    pub start_time: f64,
 }
 
 impl<'a> LogTimeGuard<'a> {

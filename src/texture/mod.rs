@@ -11,10 +11,10 @@ use glam::{vec2, Vec2};
 use std::sync::Arc;
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) struct TextureSlotGuarded(pub TextureSlotId);
+pub struct TextureSlotGuarded(pub TextureSlotId);
 
 #[derive(Debug, Clone, PartialEq)]
-pub(crate) enum TextureHandle {
+pub enum TextureHandle {
     // texture that belongs to rayquad and follows normal garbage collection rules
     Managed(Arc<TextureSlotGuarded>),
     ManagedWeak(TextureSlotId),
@@ -352,7 +352,7 @@ pub async fn load_texture(path: &str) -> Result<Texture2D, Error> {
 pub struct RenderPass {
     pub color_texture: Texture2D,
     pub depth_texture: Option<Texture2D>,
-    pub(crate) render_pass: Arc<miniquad::RenderPass>,
+    pub render_pass: Arc<miniquad::RenderPass>,
 }
 
 #[derive(Debug, Clone)]
@@ -637,7 +637,7 @@ pub fn get_screen_data() -> Image {
 /// Texture, data stored in GPU memory
 #[derive(Clone, Debug, PartialEq)]
 pub struct Texture2D {
-    pub(crate) texture: TextureHandle,
+    pub texture: TextureHandle,
 }
 
 impl Drop for TextureSlotGuarded {

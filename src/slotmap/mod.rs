@@ -10,7 +10,10 @@ use core::hash::{Hash, Hasher};
 use core::num::NonZeroU32;
 
 pub use crate::new_key_type;
-pub use basic::{Drain, IntoIter, Iter, IterMut, Keys, SlotMap, Values, ValuesMut};
+pub use basic::{
+    Drain, IntoIter, Iter, IterMut, Keys, Slot, SlotContent, SlotContentMut, SlotMap, SlotUnion,
+    Values, ValuesMut,
+};
 
 /// Creates one or more strongly typed slot map key types.
 ///
@@ -27,7 +30,7 @@ macro_rules! new_key_type {
         $(#[$meta])*
         #[derive(Copy, Clone, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
         #[repr(transparent)]
-        $vis struct $name($crate::slotmap::KeyData);
+        $vis struct $name(pub $crate::slotmap::KeyData);
 
         impl From<$crate::slotmap::KeyData> for $name {
             fn from(key: $crate::slotmap::KeyData) -> Self {
@@ -48,8 +51,8 @@ macro_rules! new_key_type {
 /// The actual data stored in a key.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct KeyData {
-    idx: u32,
-    version: NonZeroU32,
+    pub idx: u32,
+    pub version: NonZeroU32,
 }
 
 impl KeyData {
@@ -128,7 +131,7 @@ pub unsafe trait Key:
 
 #[derive(Copy, Clone, Default, Eq, PartialEq, Ord, PartialOrd, Hash, Debug)]
 #[repr(transparent)]
-pub struct DefaultKey(KeyData);
+pub struct DefaultKey(pub KeyData);
 
 impl From<KeyData> for DefaultKey {
     fn from(k: KeyData) -> Self {

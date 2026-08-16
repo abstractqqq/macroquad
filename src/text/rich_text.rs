@@ -31,7 +31,7 @@ pub struct TextDimensions {
 /// An immutable font handle for the optional rich-text renderer.
 #[derive(Clone)]
 pub struct Font {
-    asset: crate::text::Font,
+    pub asset: crate::text::Font,
 }
 
 impl std::fmt::Debug for Font {

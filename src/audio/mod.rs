@@ -63,7 +63,7 @@ pub struct PlaySoundParams {
 }
 
 pub struct AudioContext {
-    native_ctx: QuadSndContext,
+    pub native_ctx: QuadSndContext,
 }
 
 impl AudioContext {
@@ -84,7 +84,7 @@ impl AudioContext {
     }
 }
 
-struct QuadSndSoundGuarded(QuadSndSound);
+pub struct QuadSndSoundGuarded(pub QuadSndSound);
 
 impl Drop for QuadSndSoundGuarded {
     fn drop(&mut self) {
@@ -94,7 +94,7 @@ impl Drop for QuadSndSoundGuarded {
 }
 
 #[derive(Clone)]
-pub struct Sound(Arc<QuadSndSoundGuarded>);
+pub struct Sound(pub Arc<QuadSndSoundGuarded>);
 
 impl std::fmt::Debug for Sound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

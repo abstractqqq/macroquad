@@ -8,7 +8,7 @@ use crate::{color::Color, logging::warn, telemetry, texture::Texture2D, tobytes:
 
 use std::collections::BTreeMap;
 
-pub(crate) use crate::models::Vertex;
+pub use crate::models::Vertex;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DrawMode {
@@ -17,25 +17,25 @@ pub enum DrawMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GlPipeline(usize);
+pub struct GlPipeline(pub usize);
 
-struct DrawCall {
-    vertices_count: usize,
-    indices_count: usize,
-    vertices_start: usize,
-    indices_start: usize,
+pub struct DrawCall {
+    pub vertices_count: usize,
+    pub indices_count: usize,
+    pub vertices_start: usize,
+    pub indices_start: usize,
 
-    clip: Option<(i32, i32, i32, i32)>,
-    viewport: Option<(i32, i32, i32, i32)>,
-    texture: Option<miniquad::TextureId>,
+    pub clip: Option<(i32, i32, i32, i32)>,
+    pub viewport: Option<(i32, i32, i32, i32)>,
+    pub texture: Option<miniquad::TextureId>,
 
-    model: glam::Mat4,
+    pub model: glam::Mat4,
 
-    draw_mode: DrawMode,
-    pipeline: GlPipeline,
-    uniforms: Option<Vec<u8>>,
-    render_pass: Option<RenderPass>,
-    capture: bool,
+    pub draw_mode: DrawMode,
+    pub pipeline: GlPipeline,
+    pub uniforms: Option<Vec<u8>>,
+    pub render_pass: Option<RenderPass>,
+    pub capture: bool,
 }
 
 impl DrawCall {
@@ -65,12 +65,12 @@ impl DrawCall {
     }
 }
 
-struct MagicSnapshotter {
-    pipeline: Pipeline,
-    bindings: Bindings,
-    pass: Option<RenderPass>,
+pub struct MagicSnapshotter {
+    pub pipeline: Pipeline,
+    pub bindings: Bindings,
+    pub pass: Option<RenderPass>,
 
-    screen_texture: Option<miniquad::TextureId>,
+    pub screen_texture: Option<miniquad::TextureId>,
 }
 
 mod snapshotter_shader {
@@ -253,20 +253,20 @@ impl MagicSnapshotter {
     }
 }
 
-struct GlState {
-    texture: Option<miniquad::TextureId>,
-    draw_mode: DrawMode,
-    clip: Option<(i32, i32, i32, i32)>,
-    viewport: Option<(i32, i32, i32, i32)>,
-    model_stack: Vec<glam::Mat4>,
-    pipeline: Option<GlPipeline>,
-    depth_test_enable: bool,
+pub struct GlState {
+    pub texture: Option<miniquad::TextureId>,
+    pub draw_mode: DrawMode,
+    pub clip: Option<(i32, i32, i32, i32)>,
+    pub viewport: Option<(i32, i32, i32, i32)>,
+    pub model_stack: Vec<glam::Mat4>,
+    pub pipeline: Option<GlPipeline>,
+    pub depth_test_enable: bool,
 
-    break_batching: bool,
-    snapshotter: MagicSnapshotter,
+    pub break_batching: bool,
+    pub snapshotter: MagicSnapshotter,
 
-    render_pass: Option<RenderPass>,
-    capture: bool,
+    pub render_pass: Option<RenderPass>,
+    pub capture: bool,
 }
 
 impl GlState {
@@ -276,21 +276,21 @@ impl GlState {
 }
 
 #[derive(Clone, Debug)]
-struct Uniform {
-    name: String,
-    uniform_type: UniformType,
-    byte_offset: usize,
-    byte_size: usize,
+pub struct Uniform {
+    pub name: String,
+    pub uniform_type: UniformType,
+    pub byte_offset: usize,
+    pub byte_size: usize,
 }
 
 #[derive(Clone)]
-struct PipelineExt {
-    pipeline: miniquad::Pipeline,
-    wants_screen_texture: bool,
-    uniforms: Vec<Uniform>,
-    uniforms_data: Vec<u8>,
-    textures: Vec<String>,
-    textures_data: BTreeMap<String, MiniquadTexture>,
+pub struct PipelineExt {
+    pub pipeline: miniquad::Pipeline,
+    pub wants_screen_texture: bool,
+    pub uniforms: Vec<Uniform>,
+    pub uniforms_data: Vec<u8>,
+    pub textures: Vec<String>,
+    pub textures_data: BTreeMap<String, MiniquadTexture>,
 }
 
 impl PipelineExt {
@@ -370,9 +370,9 @@ impl PipelineExt {
     }
 }
 
-struct PipelinesStorage {
-    pipelines: [Option<PipelineExt>; Self::MAX_PIPELINES],
-    pipelines_amount: usize,
+pub struct PipelinesStorage {
+    pub pipelines: [Option<PipelineExt>; Self::MAX_PIPELINES],
+    pub pipelines_amount: usize,
 }
 
 impl PipelinesStorage {
@@ -553,20 +553,20 @@ impl PipelinesStorage {
 }
 
 pub struct QuadGl {
-    pipelines: PipelinesStorage,
+    pub pipelines: PipelinesStorage,
 
-    draw_calls: Vec<DrawCall>,
-    draw_calls_bindings: Vec<Bindings>,
-    draw_calls_count: usize,
-    state: GlState,
-    start_time: f64,
+    pub draw_calls: Vec<DrawCall>,
+    pub draw_calls_bindings: Vec<Bindings>,
+    pub draw_calls_count: usize,
+    pub state: GlState,
+    pub start_time: f64,
 
-    pub(crate) white_texture: miniquad::TextureId,
-    max_vertices: usize,
-    max_indices: usize,
+    pub white_texture: miniquad::TextureId,
+    pub max_vertices: usize,
+    pub max_indices: usize,
 
-    batch_vertex_buffer: Vec<Vertex>,
-    batch_index_buffer: Vec<u16>,
+    pub batch_vertex_buffer: Vec<Vertex>,
+    pub batch_index_buffer: Vec<u16>,
 }
 
 impl QuadGl {

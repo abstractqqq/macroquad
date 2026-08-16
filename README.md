@@ -26,6 +26,18 @@ The main intentional differences from upstream Macroquad are:
 - **Explicit entry point:** applications call `Window::new` or
   `Window::from_config` directly; RayQuad has no companion procedural-macro
   crate.
+- **No built-in scene graph:** the experimental hierarchical scene system,
+  arena-backed node storage, scene state machine, scene-based coroutine tweens,
+  and their runtime and telemetry hooks were removed. RayQuad keeps the
+  application frame loop authoritative instead of mixing explicit
+  immediate-mode control flow with an implicit tree of lifecycle callbacks.
+  Games can use ordinary Rust ownership, flat collections, or an external ECS;
+  specialized hierarchies such as UI layout and transform parenting do not need
+  to become a universal world model.
+- **Inspectable public data:** fields of publicly usable structs are public,
+  including their supporting handle and storage types. Applications can inspect,
+  construct, and integrate these values directly instead of being forced through
+  hidden framework state. (If you want to hack, go hack it.)
 - **Native-only for now:** RayQuad currently targets desktop and mobile platforms.
 
 - **Repository cleanup and reorganization:** source files are grouped by subsystem,
@@ -43,6 +55,9 @@ The main intentional differences from upstream Macroquad are:
   generational keys.
 - Replaced the `color_u8!` macro with a typed `const fn` named `color_u8`.
 - Updated coroutine memory telemetry to describe its SlotMap-based estimate.
+
+
+## Old Macroquad README
 
 ## Features
 

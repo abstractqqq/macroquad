@@ -16,9 +16,9 @@ use crate::{
     Error,
 };
 
-mod font_atlas;
+pub mod font_atlas;
 pub(crate) mod rasterizer;
-pub(crate) mod renderer;
+pub mod renderer;
 
 use renderer::TextRenderer;
 
@@ -34,19 +34,19 @@ pub struct TextDimensions {
     pub offset_y: f32,
 }
 
-struct FontData {
-    bytes: Arc<[u8]>,
-    index: usize,
-    atlas: Option<FontAtlas>,
-    glyphs: Vec<(u16, GlyphInfo)>,
-    raster_size: f32,
+pub struct FontData {
+    pub bytes: Arc<[u8]>,
+    pub index: usize,
+    pub atlas: Option<FontAtlas>,
+    pub glyphs: Vec<(u16, GlyphInfo)>,
+    pub raster_size: f32,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct GlyphInfo {
-    pub(crate) rect: Option<crate::math::Rect>,
-    pub(crate) left: i32,
-    pub(crate) top: i32,
+pub struct GlyphInfo {
+    pub rect: Option<crate::math::Rect>,
+    pub left: i32,
+    pub top: i32,
 }
 
 /// Parameters used to construct a complete immutable font atlas.
@@ -78,12 +78,12 @@ impl Default for FontLoadParams {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct FontId(usize);
+pub struct FontId(pub usize);
 
 /// An immutable font asset.
 #[derive(Clone)]
 pub struct Font {
-    data: Arc<FontData>,
+    pub data: Arc<FontData>,
 }
 
 impl std::fmt::Debug for Font {
@@ -347,13 +347,13 @@ impl Default for TextLayoutDrawParams {
 /// Shaped and positioned text that can be drawn repeatedly without layout work.
 #[derive(Clone)]
 pub struct TextLayout {
-    font: Font,
-    shaped: Arc<renderer::ShapedText>,
-    cluster_colors: Vec<Option<Color>>,
-    dimensions: TextDimensions,
-    font_size: f32,
-    scale_x: f32,
-    scale_y: f32,
+    pub font: Font,
+    pub shaped: Arc<renderer::ShapedText>,
+    pub cluster_colors: Vec<Option<Color>>,
+    pub dimensions: TextDimensions,
+    pub font_size: f32,
+    pub scale_x: f32,
+    pub scale_y: f32,
 }
 
 impl std::fmt::Debug for TextLayout {

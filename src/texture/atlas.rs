@@ -9,16 +9,16 @@ pub struct Sprite {
 
 pub type SpriteKey = miniquad::TextureId;
 pub struct Atlas {
-    texture: miniquad::TextureId,
-    image: Image,
+    pub texture: miniquad::TextureId,
+    pub image: Image,
     pub sprites: HashMap<SpriteKey, Sprite>,
-    cursor_x: u16,
-    cursor_y: u16,
-    max_line_height: u16,
+    pub cursor_x: u16,
+    pub cursor_y: u16,
+    pub max_line_height: u16,
 
     pub dirty: bool,
 
-    filter: miniquad::FilterMode,
+    pub filter: miniquad::FilterMode,
 }
 
 impl Drop for Atlas {

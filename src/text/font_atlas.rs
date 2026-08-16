@@ -4,10 +4,10 @@ use crate::{
     texture::{Image, Texture2D},
 };
 
-pub(crate) struct FontAtlas {
-    texture: miniquad::TextureId,
-    width: u16,
-    height: u16,
+pub struct FontAtlas {
+    pub texture: miniquad::TextureId,
+    pub width: u16,
+    pub height: u16,
 }
 
 impl FontAtlas {

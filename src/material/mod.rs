@@ -5,7 +5,7 @@ use miniquad::{PipelineParams, UniformDesc};
 use std::sync::Arc;
 
 #[derive(PartialEq)]
-struct GlPipelineGuarded(GlPipeline);
+pub struct GlPipelineGuarded(pub GlPipeline);
 
 impl Drop for GlPipelineGuarded {
     fn drop(&mut self) {
@@ -16,7 +16,7 @@ impl Drop for GlPipelineGuarded {
 /// Material instance loaded on GPU.
 #[derive(Clone, PartialEq)]
 pub struct Material {
-    pipeline: Arc<GlPipelineGuarded>,
+    pub pipeline: Arc<GlPipelineGuarded>,
 }
 
 impl std::fmt::Debug for Material {

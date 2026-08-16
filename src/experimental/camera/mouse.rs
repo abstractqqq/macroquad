@@ -10,7 +10,7 @@ pub struct Camera {
     pub offset: Vec2,
     pub scale: f32,
 
-    last_mouse_pos: Vec2,
+    pub last_mouse_pos: Vec2,
 }
 
 impl Default for Camera {

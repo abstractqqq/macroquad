@@ -84,13 +84,13 @@ pub struct AnimationFrame {
 /// Main definition of all animations for specific image
 #[derive(Clone)]
 pub struct AnimatedSprite {
-    tile_width: f32,
-    tile_height: f32,
-    animations: Vec<Animation>,
+    pub tile_width: f32,
+    pub tile_height: f32,
+    pub animations: Vec<Animation>,
 
-    current_animation: usize,
-    time: f32,
-    frame: u32,
+    pub current_animation: usize,
+    pub time: f32,
+    pub frame: u32,
     /// Controls if frame should be updated on [update][Self::update]
     pub playing: bool,
 }

@@ -8,7 +8,7 @@ use crate::Error;
 // Returns Pending as long as its inner bool is false.
 #[derive(Default)]
 pub struct FrameFuture {
-    done: bool,
+    pub done: bool,
 }
 
 impl Future for FrameFuture {
