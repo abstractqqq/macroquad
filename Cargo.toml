@@ -11,6 +11,7 @@ license = "MIT OR Apache-2.0"
 
 [features]
 audio = ["quad-snd"]
+3d = []
 log-rs = ["log"]
 glam-serde = ["glam/serde"]
 default = []
@@ -36,6 +37,16 @@ swash = "0.2"
 backtrace = { version = "0.3.60", optional = true }
 log = { version = "0.4", optional = true }
 quad-snd = { version = "0.2", optional = true }
+
+[[example]]
+name = "3d"
+path = "examples/3d.rs"
+required-features = ["3d"]
+
+[[example]]
+name = "first_person"
+path = "examples/first_person.rs"
+required-features = ["3d"]
 
 [[example]]
 name = "rich_text_comparison"

@@ -7,7 +7,9 @@ use crate::{
     texture::RenderTarget,
     window::{screen_height, screen_width},
 };
-use glam::{vec2, vec3, Mat4, Vec2, Vec3};
+#[cfg(feature = "3d")]
+use glam::Vec3;
+use glam::{vec2, vec3, Mat4, Vec2};
 
 pub trait Camera {
     fn matrix(&self) -> Mat4;
@@ -177,12 +179,14 @@ impl Camera2D {
     }
 }
 
+#[cfg(feature = "3d")]
 #[derive(Debug, Clone, Copy)]
 pub enum Projection {
     Perspective,
     Orthographics,
 }
 
+#[cfg(feature = "3d")]
 #[derive(Debug)]
 pub struct Camera3D {
     /// Camera position.
@@ -221,6 +225,7 @@ pub struct Camera3D {
     pub z_far: f32,
 }
 
+#[cfg(feature = "3d")]
 impl Default for Camera3D {
     fn default() -> Camera3D {
         Camera3D {
@@ -238,6 +243,7 @@ impl Default for Camera3D {
     }
 }
 
+#[cfg(feature = "3d")]
 impl Camera for Camera3D {
     fn matrix(&self) -> Mat4 {
         let (width, height) = if let Some(rt) = &self.render_target {

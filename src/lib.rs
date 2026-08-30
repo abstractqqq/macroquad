@@ -148,6 +148,7 @@ pub mod logging {
 // Use logging facade
 pub use ::log as logging;
 pub use miniquad;
+pub use swash;
 
 use crate::{
     color::{colors::*, Color},
