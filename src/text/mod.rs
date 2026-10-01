@@ -38,7 +38,7 @@ pub struct FontData {
     pub bytes: Arc<[u8]>,
     pub index: usize,
     pub atlas: Option<FontAtlas>,
-    pub glyphs: Vec<(u16, GlyphInfo)>,
+    pub glyphs: Box<[(u16, GlyphInfo)]>,
     pub raster_size: f32,
 }
 
@@ -171,6 +171,7 @@ impl Font {
             ));
         }
         glyphs.sort_unstable_by_key(|(glyph_id, _)| *glyph_id);
+        let glyphs = glyphs.into_boxed_slice();
         let atlas = atlas.finish(ctx);
         Ok(Self {
             data: Arc::new(FontData {
@@ -235,7 +236,7 @@ impl Font {
                 bytes: Arc::from(bytes),
                 index: 0,
                 atlas: None,
-                glyphs: Vec::new(),
+                glyphs: Box::default(),
                 raster_size: renderer::BASE_FONT_SIZE,
             }),
         })

@@ -277,7 +277,7 @@ impl GlState {
 
 #[derive(Clone, Debug)]
 pub struct Uniform {
-    pub name: String,
+    pub name: Box<str>,
     pub uniform_type: UniformType,
     pub byte_offset: usize,
     pub byte_size: usize,
@@ -287,9 +287,9 @@ pub struct Uniform {
 pub struct PipelineExt {
     pub pipeline: miniquad::Pipeline,
     pub wants_screen_texture: bool,
-    pub uniforms: Vec<Uniform>,
+    pub uniforms: Box<[Uniform]>,
     pub uniforms_data: Vec<u8>,
-    pub textures: Vec<String>,
+    pub textures: Box<[Box<str>]>,
     pub textures_data: BTreeMap<String, MiniquadTexture>,
 }
 
@@ -298,7 +298,7 @@ impl PipelineExt {
         let uniform_meta = self.uniforms.iter().find(
             |Uniform {
                  name: uniform_name, ..
-             }| uniform_name == name,
+             }| uniform_name.as_ref() == name,
         );
         if uniform_meta.is_none() {
             warn!("Trying to set non-existing uniform: {}", name);
@@ -344,7 +344,7 @@ impl PipelineExt {
         let uniform_meta = self.uniforms.iter().find(
             |Uniform {
                  name: uniform_name, ..
-             }| uniform_name == name,
+             }| uniform_name.as_ref() == name,
         );
         if uniform_meta.is_none() {
             warn!("Trying to set non-existing uniform: {}", name);
@@ -509,7 +509,7 @@ impl PipelinesStorage {
             .scan(0, |offset, uniform| {
                 let byte_size = uniform.uniform_type.size() * uniform.array_count;
                 let uniform = Uniform {
-                    name: uniform.name.clone(),
+                    name: uniform.name.clone().into_boxed_str(),
                     uniform_type: uniform.uniform_type,
                     byte_size,
                     byte_offset: *offset,
@@ -519,7 +519,13 @@ impl PipelinesStorage {
 
                 Some(uniform)
             })
-            .collect();
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let textures = textures
+            .into_iter()
+            .map(String::into_boxed_str)
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
 
         self.pipelines[id] = Some(PipelineExt {
             pipeline,
@@ -754,7 +760,7 @@ impl QuadGl {
                 .resize(2 + pipeline.textures.len(), white_texture);
 
             for (pos, name) in pipeline.textures.iter().enumerate() {
-                if let Some(texture) = pipeline.textures_data.get(name).copied() {
+                if let Some(texture) = pipeline.textures_data.get(name.as_ref()).copied() {
                     bindings.images[2 + pos] = texture;
                 }
             }
@@ -984,7 +990,7 @@ impl QuadGl {
         pipeline
             .textures
             .iter()
-            .find(|x| *x == name)
+            .find(|x| x.as_ref() == name)
             .unwrap_or_else(|| {
                 panic!(
                     "can't find texture with name '{}', there is only this names: {:?}",

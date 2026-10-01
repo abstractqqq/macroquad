@@ -209,7 +209,7 @@ struct Context {
     #[cfg(feature = "rich-text")]
     rich_text_renderer: rich_text::RichTextRenderer,
 
-    pc_assets_folder: Option<String>,
+    pc_assets_folder: Option<Box<str>>,
 
     start_time: f64,
     last_frame_time: f64,
