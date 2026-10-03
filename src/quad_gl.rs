@@ -6,7 +6,7 @@ pub use miniquad::{FilterMode, TextureId as MiniquadTexture, UniformDesc};
 
 use crate::{color::Color, logging::warn, telemetry, texture::Texture2D, tobytes::ToBytes, Error};
 
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, ops::Range};
 
 pub use crate::models::Vertex;
 
@@ -33,7 +33,7 @@ pub struct DrawCall {
 
     pub draw_mode: DrawMode,
     pub pipeline: GlPipeline,
-    pub uniforms: Option<Vec<u8>>,
+    pub uniforms: Option<Range<usize>>,
     pub render_pass: Option<RenderPass>,
     pub capture: bool,
 }
@@ -44,7 +44,6 @@ impl DrawCall {
         model: glam::Mat4,
         draw_mode: DrawMode,
         pipeline: GlPipeline,
-        uniforms: Option<Vec<u8>>,
         render_pass: Option<RenderPass>,
     ) -> DrawCall {
         DrawCall {
@@ -58,7 +57,7 @@ impl DrawCall {
             model,
             draw_mode,
             pipeline,
-            uniforms,
+            uniforms: None,
             render_pass,
             capture: false,
         }
@@ -573,6 +572,7 @@ pub struct QuadGl {
 
     pub batch_vertex_buffer: Vec<Vertex>,
     pub batch_index_buffer: Vec<u16>,
+    pub batch_uniform_buffer: Vec<u8>,
 }
 
 impl QuadGl {
@@ -606,6 +606,7 @@ impl QuadGl {
             white_texture,
             batch_vertex_buffer: Vec::with_capacity(max_vertices),
             batch_index_buffer: Vec::with_capacity(max_indices),
+            batch_uniform_buffer: Vec::new(),
             max_vertices,
             max_indices,
         }
@@ -677,7 +678,8 @@ impl QuadGl {
     pub fn reset(&mut self) {
         self.state.clip = None;
         self.state.texture = None;
-        self.state.model_stack = vec![glam::Mat4::IDENTITY];
+        self.state.model_stack.clear();
+        self.state.model_stack.push(glam::Mat4::IDENTITY);
 
         self.draw_calls_count = 0;
     }
@@ -778,10 +780,10 @@ impl QuadGl {
             }
             ctx.apply_bindings(bindings);
 
-            if let Some(ref uniforms) = dc.uniforms {
-                for i in 0..uniforms.len() {
-                    pipeline.uniforms_data[i] = uniforms[i];
-                }
+            if let Some(uniforms) = &dc.uniforms {
+                pipeline
+                    .uniforms_data
+                    .copy_from_slice(&self.batch_uniform_buffer[uniforms.clone()]);
             }
             pipeline.set_uniform("Projection", projection);
             pipeline.set_uniform("Model", dc.model);
@@ -806,6 +808,7 @@ impl QuadGl {
         self.draw_calls_count = 0;
         self.batch_index_buffer.clear();
         self.batch_vertex_buffer.clear();
+        self.batch_uniform_buffer.clear();
     }
 
     pub(crate) fn capture(&mut self, capture: bool) {
@@ -914,13 +917,12 @@ impl QuadGl {
                 || draw_call.capture != self.state.capture
                 || self.state.break_batching
         }) {
-            let uniforms = self.state.pipeline.map_or(None, |pipeline| {
-                Some(
-                    self.pipelines
-                        .get_quad_pipeline_mut(pipeline)
-                        .uniforms_data
-                        .clone(),
-                )
+            let uniforms = self.state.pipeline.map(|pipeline| {
+                let start = self.batch_uniform_buffer.len();
+                self.batch_uniform_buffer.extend_from_slice(
+                    &self.pipelines.get_quad_pipeline_mut(pipeline).uniforms_data,
+                );
+                start..self.batch_uniform_buffer.len()
             });
 
             if self.draw_calls_count >= self.draw_calls.len() {
@@ -929,7 +931,6 @@ impl QuadGl {
                     self.state.model(),
                     self.state.draw_mode,
                     pip,
-                    uniforms.clone(),
                     self.state.render_pass,
                 ));
             }

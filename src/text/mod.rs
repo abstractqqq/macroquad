@@ -40,6 +40,8 @@ pub struct FontData {
     pub atlas: Option<FontAtlas>,
     pub glyphs: Box<[(u16, GlyphInfo)]>,
     pub raster_size: f32,
+    /// OpenType features applied whenever text is shaped with this font.
+    pub shaping: FontShapingOptions,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -47,6 +49,58 @@ pub struct GlyphInfo {
     pub rect: Option<crate::math::Rect>,
     pub left: i32,
     pub top: i32,
+}
+
+/// Packed OpenType feature settings used while shaping a font.
+///
+/// The low three bits control `kern`, `liga`, and `palt`, respectively. The
+/// remaining bits are reserved for future shaping options.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct FontShapingOptions(pub u8);
+
+impl FontShapingOptions {
+    /// Bit used for the OpenType `kern` feature.
+    pub const KERN: u8 = 1 << 0;
+    /// Bit used for the OpenType `liga` feature.
+    pub const LIGA: u8 = 1 << 1;
+    /// Bit used for the OpenType `palt` feature.
+    pub const PALT: u8 = 1 << 2;
+
+    /// Packs the three supported OpenType feature switches into one byte.
+    pub const fn new(kern: bool, liga: bool, palt: bool) -> Self {
+        Self((kern as u8) * Self::KERN | (liga as u8) * Self::LIGA | (palt as u8) * Self::PALT)
+    }
+
+    /// Returns whether pair kerning is enabled.
+    pub const fn kern(self) -> bool {
+        self.0 & Self::KERN != 0
+    }
+
+    /// Returns whether standard ligatures are enabled.
+    pub const fn liga(self) -> bool {
+        self.0 & Self::LIGA != 0
+    }
+
+    /// Returns whether proportional alternate widths are requested.
+    ///
+    /// Swash ignores this request when the font does not provide `palt`.
+    pub const fn palt(self) -> bool {
+        self.0 & Self::PALT != 0
+    }
+
+    pub(crate) const fn swash_features(self) -> [(&'static str, u16); 3] {
+        [
+            ("kern", self.kern() as u16),
+            ("liga", self.liga() as u16),
+            ("palt", self.palt() as u16),
+        ]
+    }
+}
+
+impl Default for FontShapingOptions {
+    fn default() -> Self {
+        Self::new(true, true, false)
+    }
 }
 
 /// Parameters used to construct a complete immutable font atlas.
@@ -64,6 +118,8 @@ pub struct FontLoadParams {
     pub raster_size: u16,
     /// Texture filtering used by the finished atlas.
     pub filter: miniquad::FilterMode,
+    /// OpenType features used for atlas preparation and subsequent text shaping.
+    pub shaping: FontShapingOptions,
 }
 
 impl Default for FontLoadParams {
@@ -73,6 +129,7 @@ impl Default for FontLoadParams {
             texts: Vec::new(),
             raster_size: renderer::BASE_FONT_SIZE as u16,
             filter: miniquad::FilterMode::Linear,
+            shaping: FontShapingOptions::default(),
         }
     }
 }
@@ -138,6 +195,7 @@ impl Font {
                 .builder(font)
                 .script(script)
                 .size(renderer::BASE_FONT_SIZE)
+                .features(params.shaping.swash_features())
                 .build();
             shaper.add_str(text);
             shaper.shape_with(|cluster| {
@@ -180,6 +238,7 @@ impl Font {
                 atlas: Some(atlas),
                 glyphs,
                 raster_size: params.raster_size as f32,
+                shaping: params.shaping,
             }),
         })
     }
@@ -238,6 +297,7 @@ impl Font {
                 atlas: None,
                 glyphs: Box::default(),
                 raster_size: renderer::BASE_FONT_SIZE,
+                shaping: FontShapingOptions::default(),
             }),
         })
     }
@@ -255,7 +315,7 @@ impl Font {
 
 #[cfg(test)]
 mod font_tests {
-    use super::Font;
+    use super::{Font, FontShapingOptions};
 
     #[test]
     fn ascii_character_list_is_the_printable_ascii_repertoire() {
@@ -264,6 +324,32 @@ mod font_tests {
         assert_eq!(characters.len(), 95);
         assert_eq!(characters.first(), Some(&' '));
         assert_eq!(characters.last(), Some(&'~'));
+    }
+
+    #[test]
+    fn shaping_options_pack_feature_flags() {
+        let options = FontShapingOptions::new(false, true, true);
+
+        assert_eq!(
+            options.0,
+            FontShapingOptions::LIGA | FontShapingOptions::PALT
+        );
+        assert!(!options.kern());
+        assert!(options.liga());
+        assert!(options.palt());
+        assert_eq!(
+            options.swash_features(),
+            [("kern", 0), ("liga", 1), ("palt", 1)]
+        );
+    }
+
+    #[test]
+    fn shaping_options_preserve_existing_defaults() {
+        let options = FontShapingOptions::default();
+
+        assert!(options.kern());
+        assert!(options.liga());
+        assert!(!options.palt());
     }
 }
 

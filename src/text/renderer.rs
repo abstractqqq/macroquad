@@ -190,6 +190,7 @@ impl TextRenderer {
                 .builder(font_ref)
                 .script(script)
                 .size(BASE_FONT_SIZE)
+                .features(font.data.shaping.swash_features())
                 .build();
             shaper.add_str(line);
             shaper.shape_with(|cluster| {

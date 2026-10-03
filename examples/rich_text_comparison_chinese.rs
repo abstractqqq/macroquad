@@ -60,6 +60,7 @@ async fn game() {
         FontLoadParams {
             characters: characters.clone(),
             texts: texts.clone(),
+            shaping: FontShapingOptions::new(false, false, false),
             ..Default::default()
         },
     )
@@ -72,6 +73,7 @@ async fn game() {
         FontLoadParams {
             characters,
             texts,
+            shaping: FontShapingOptions::new(false, false, false),
             ..Default::default()
         },
     )
