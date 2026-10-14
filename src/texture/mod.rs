@@ -8,7 +8,41 @@ pub use crate::quad_gl::FilterMode;
 use crate::quad_gl::{DrawMode, Vertex};
 use crate::slotmap::{DefaultKey as TextureSlotId, SlotMap};
 use glam::{vec2, Vec2};
-use std::sync::Arc;
+use std::{io::Cursor, sync::Arc};
+
+fn decode_png_rgba8(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), Error> {
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
+    decoder.set_ignore_text_chunk(true);
+    decoder.set_transformations(png::Transformations::ALPHA | png::Transformations::STRIP_16);
+
+    let mut reader = decoder.read_info()?;
+    let output_size = reader
+        .output_buffer_size()
+        .ok_or(Error::UnknownError("PNG image is too large to decode"))?;
+    let mut decoded = vec![0; output_size];
+    let info = reader.next_frame(&mut decoded)?;
+    decoded.truncate(info.buffer_size());
+
+    let width = u16::try_from(info.width)
+        .map_err(|_| Error::UnknownError("PNG image width exceeds 65535 pixels"))?;
+    let height = u16::try_from(info.height)
+        .map_err(|_| Error::UnknownError("PNG image height exceeds 65535 pixels"))?;
+
+    let rgba = match (info.color_type, info.bit_depth) {
+        (png::ColorType::Rgba, png::BitDepth::Eight) => decoded,
+        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => decoded
+            .chunks_exact(2)
+            .flat_map(|pixel| [pixel[0], pixel[0], pixel[0], pixel[1]])
+            .collect(),
+        _ => {
+            return Err(Error::UnknownError(
+                "PNG decoder produced an unsupported pixel format",
+            ));
+        }
+    };
+
+    Ok((width, height, rgba))
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct TextureSlotGuarded(pub TextureSlotId);
@@ -101,32 +135,9 @@ impl Image {
         }
     }
 
-    /// Creates an Image from a slice of bytes that contains an encoded image.
-    ///
-    /// If `format` is None, it will make an educated guess on the
-    /// [ImageFormat][image::ImageFormat].
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # use rayquad::prelude::*;
-    /// let icon = Image::from_file_with_format(
-    ///     include_bytes!("../examples/rust.png"),
-    ///     Some(ImageFormat::Png),
-    ///     );
-    /// ```
-    pub fn from_file_with_format(
-        bytes: &[u8],
-        format: Option<image::ImageFormat>,
-    ) -> Result<Image, Error> {
-        let img = if let Some(fmt) = format {
-            image::load_from_memory_with_format(bytes, fmt)?.to_rgba8()
-        } else {
-            image::load_from_memory(bytes)?.to_rgba8()
-        };
-        let width = img.width() as u16;
-        let height = img.height() as u16;
-        let bytes = img.into_raw();
+    /// Creates an Image from PNG encoded bytes.
+    pub fn from_png_bytes(bytes: &[u8]) -> Result<Image, Error> {
+        let (width, height, bytes) = decode_png_rgba8(bytes)?;
 
         Ok(Image {
             width,
@@ -323,14 +334,12 @@ impl Image {
             }
         }
 
-        image::save_buffer(
-            path,
-            &bytes[..],
-            self.width as _,
-            self.height as _,
-            image::ColorType::Rgba8,
-        )
-        .unwrap();
+        let file = std::fs::File::create(path).unwrap();
+        let mut encoder = png::Encoder::new(file, self.width.into(), self.height.into());
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&bytes).unwrap();
     }
 }
 
@@ -338,14 +347,14 @@ impl Image {
 pub async fn load_image(path: &str) -> Result<Image, Error> {
     let bytes = load_file(path).await?;
 
-    Image::from_file_with_format(&bytes, None)
+    Image::from_png_bytes(&bytes)
 }
 
 /// Loads a [Texture2D] from a file into GPU memory.
 pub async fn load_texture(path: &str) -> Result<Texture2D, Error> {
     let bytes = load_file(path).await?;
 
-    Ok(Texture2D::from_file_with_format(&bytes[..], None))
+    Texture2D::from_png_bytes(&bytes)
 }
 
 #[derive(Debug, Clone)]
@@ -680,37 +689,11 @@ impl Texture2D {
         Texture2D::unmanaged(ctx.gl.white_texture)
     }
 
-    /// Creates a Texture2D from a slice of bytes that contains an encoded image.
-    ///
-    /// If `format` is None, it will make an educated guess on the
-    /// [ImageFormat][image::ImageFormat].
-    ///
-    /// # Example
-    /// ```
-    /// # use rayquad::prelude::*;
-    /// # fn main() { Window::new("test", game()); }
-    /// # async fn game() {
-    /// let texture = Texture2D::from_file_with_format(
-    ///     include_bytes!("../examples/rust.png"),
-    ///     None,
-    ///     );
-    /// # }
-    /// ```
-    pub fn from_file_with_format(bytes: &[u8], format: Option<image::ImageFormat>) -> Texture2D {
-        let img = if let Some(fmt) = format {
-            image::load_from_memory_with_format(bytes, fmt)
-                .unwrap_or_else(|e| panic!("{}", e))
-                .to_rgba8()
-        } else {
-            image::load_from_memory(bytes)
-                .unwrap_or_else(|e| panic!("{}", e))
-                .to_rgba8()
-        };
-        let width = img.width() as u16;
-        let height = img.height() as u16;
-        let bytes = img.into_raw();
+    /// Creates a Texture2D from PNG encoded bytes.
+    pub fn from_png_bytes(bytes: &[u8]) -> Result<Texture2D, Error> {
+        let (width, height, bytes) = decode_png_rgba8(bytes)?;
 
-        Self::from_rgba8(width, height, &bytes)
+        Ok(Self::from_rgba8(width, height, &bytes))
     }
 
     /// Creates a Texture2D from an [Image].

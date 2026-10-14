@@ -50,6 +50,10 @@ The main intentional differences from upstream Macroquad are:
   Parley.
 - **Ordered input handling:** keyboard state uses compact bitsets for membership
   checks together with `Vec` storage to preserve input-event order.
+- **Direct PNG decoding:** image and texture loaders use the `png` crate directly
+  and decode into upload-ready RGBA pixels. RayQuad supports PNG as its encoded
+  image format and avoids the generic `image` crate, `DynamicImage`,
+  `ImageBuffer`, format dispatch, and an intermediate full-buffer copy.
 
 - Replaced the handwritten coroutine and texture generational stores with typed
   generational keys.
