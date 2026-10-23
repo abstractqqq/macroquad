@@ -6,10 +6,13 @@ use crate::{file::load_file, get_context, Error};
 use std::sync::Arc;
 
 #[cfg(feature = "audio")]
-use quad_snd::{AudioContext as QuadSndContext, Sound as QuadSndSound};
+mod snd;
 
 #[cfg(feature = "audio")]
-pub use quad_snd::PlaySoundParams;
+use snd::{AudioContext as QuadSndContext, Sound as QuadSndSound};
+
+#[cfg(feature = "audio")]
+pub use snd::PlaySoundParams;
 
 #[cfg(not(feature = "audio"))]
 mod dummy_audio {
@@ -32,8 +35,8 @@ mod dummy_audio {
     pub struct Sound {}
 
     impl Sound {
-        pub fn load(_ctx: &mut AudioContext, _data: &[u8]) -> Sound {
-            Sound {}
+        pub fn load(_ctx: &mut AudioContext, _data: &[u8]) -> Result<Sound, String> {
+            Ok(Sound {})
         }
 
         pub fn play(&self, _ctx: &mut AudioContext, _params: PlaySoundParams) {
@@ -119,6 +122,7 @@ pub async fn load_sound_from_bytes(data: &[u8]) -> Result<Sound, Error> {
     let sound = {
         let ctx = &mut get_context().audio_context;
         QuadSndSound::load(&mut ctx.native_ctx, data)
+            .map_err(|e| Error::AudioError(e.to_string()))?
     };
 
     Ok(Sound(Arc::new(QuadSndSoundGuarded(sound))))

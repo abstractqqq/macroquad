@@ -10,7 +10,12 @@ readme="README.md"
 license = "MIT OR Apache-2.0"
 
 [features]
-audio = ["quad-snd"]
+audio = [
+    "dep:libc",
+    "dep:quad-alsa-sys",
+    "dep:winapi",
+    "dep:audir-sles",
+]
 3d = []
 log-rs = ["log"]
 glam-serde = ["glam/serde"]
@@ -36,7 +41,29 @@ parley = { version = "0.11", optional = true, default-features = false, features
 swash = "0.2"
 backtrace = { version = "0.3.60", optional = true }
 log = { version = "0.4", optional = true }
-quad-snd = { version = "0.2", optional = true }
+
+[build-dependencies]
+cc = "1.0"
+
+# Dependencies of the vendored audio backend (src/audio/snd), enabled by `audio`.
+
+[target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd"))'.dependencies]
+libc = { version = "0.2", optional = true }
+quad-alsa-sys = { version = "0.3.2", optional = true }
+
+[target.'cfg(target_os = "android")'.dependencies]
+audir-sles = { version = "0.1.0", optional = true }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winapi = { version = "0.3.8", optional = true, features = [
+    "debug", "ksmedia", "audioclient", "combaseapi", "coml2api", "devpkey",
+    "handleapi", "mmdeviceapi", "objbase", "unknwnbase", "winerror",
+    "synchapi", "winbase",
+] }
+
+# Reference WAV implementation for the tests of src/audio/snd/wav.rs.
+[dev-dependencies]
+hound = "3"
 
 [[example]]
 name = "3d"

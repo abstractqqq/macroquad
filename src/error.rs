@@ -8,6 +8,7 @@ pub enum Error {
     ShaderError(miniquad::ShaderError),
     PngError(png::DecodingError),
     UnknownError(&'static str),
+    AudioError(String),
 }
 
 impl From<&'static str> for Error {
