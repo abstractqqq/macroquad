@@ -53,8 +53,12 @@ The main intentional differences from upstream Macroquad are:
 - **Direct PNG decoding:** image and texture loaders use the `png` crate directly
   and decode into upload-ready RGBA pixels. RayQuad supports PNG as its encoded
   image format and avoids the generic `image` crate, `DynamicImage`,
-  `ImageBuffer`, format dispatch, and an intermediate full-buffer copy.
-
+- **Streamlined audio subsystem:** vendored and modernized `quad-snd` directly
+  into RayQuad, removing `audrey`, `dasp`, `hound`, and `lewton` crate dependencies.
+  WAV files decode via a lightweight, in-memory reader (~14–22× faster), Ogg Vorbis
+  decodes via embedded `stb_vorbis` (~2–3× faster), mono-to-stereo expansion and
+  linear resampling run in a single integer-precision pass, and loading returns
+  structured `Result` errors without panics.
 - Replaced the handwritten coroutine and texture generational stores with typed
   generational keys.
 - Replaced the `color_u8!` macro with a typed `const fn` named `color_u8`.
