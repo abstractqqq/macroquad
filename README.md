@@ -114,6 +114,8 @@ RayQuad separates font processing into two distinct modes:
    - See `examples/bake_font.rs` for a full working example of baking fonts during an asset build step.
 
 
+# Old Macroquad README
+
 ## Features
 
 * Native desktop and mobile support.
