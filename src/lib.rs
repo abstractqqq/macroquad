@@ -61,9 +61,6 @@ pub mod input;
 pub mod material;
 pub mod math;
 pub mod models;
-#[cfg(feature = "rich-text")]
-#[path = "text/rich_text.rs"]
-pub mod rich_text;
 pub mod shapes;
 pub mod text;
 pub mod texture;
@@ -148,6 +145,7 @@ pub mod logging {
 // Use logging facade
 pub use ::log as logging;
 pub use miniquad;
+#[cfg(feature = "font-rasterize")]
 pub use swash;
 
 use crate::{
@@ -206,8 +204,6 @@ struct Context {
     coroutines_context: experimental::coroutines::CoroutinesContext,
     fonts_storage: text::FontsStorage,
     text_renderer: text::renderer::TextRenderer,
-    #[cfg(feature = "rich-text")]
-    rich_text_renderer: rich_text::RichTextRenderer,
 
     pc_assets_folder: Option<Box<str>>,
 
@@ -319,8 +315,6 @@ impl Context {
         let mut text_renderer = text::renderer::TextRenderer::new();
         let fonts_storage =
             text::FontsStorage::new(&mut *ctx, &mut text_renderer, default_filter_mode);
-        #[cfg(feature = "rich-text")]
-        let rich_text_renderer = rich_text::RichTextRenderer::new();
 
         Context {
             screen_width,
@@ -352,8 +346,6 @@ impl Context {
 
             fonts_storage,
             text_renderer,
-            #[cfg(feature = "rich-text")]
-            rich_text_renderer,
             texture_batcher: texture::Batcher::new(&mut *ctx),
             camera_stack: vec![],
 

@@ -45,9 +45,11 @@ The main intentional differences from upstream Macroquad are:
   `assets/`.
 - **Faster hash collections:** production uses of
   `std::collections::HashMap` and `HashSet` have been replaced with Foldhash.
-- **Swash font backend:** text shaping and rasterization now use Swash. Rich-text
-  layout is available through the optional `rich-text` Cargo feature, backed by
-  Parley.
+- **Shapeless fast font pipeline:** text rendering skips runtime shaping entirely
+  (no HarfBuzz, no Parley, no per-string shaping allocations). In development,
+  fonts can be rasterized on the fly from TTF via the `font-rasterize` feature
+  (backed by Swash). In production, pre-baked `.bin` metrics and `.png` atlases
+  can be loaded with zero font dependencies.
 - **Ordered input handling:** keyboard state uses compact bitsets for membership
   checks together with `Vec` storage to preserve input-event order.
 - **Direct PNG decoding:** image and texture loaders use the `png` crate directly

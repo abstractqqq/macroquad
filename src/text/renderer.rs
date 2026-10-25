@@ -1,25 +1,21 @@
-use std::{collections::VecDeque, hash::BuildHasher, ops::Range, sync::Arc};
-
-use foldhash::{fast::RandomState, HashMap, HashMapExt};
-use swash::{
-    shape::ShapeContext,
-    text::{Codepoint, Script},
-};
+use std::{ops::Range, sync::Arc};
 
 use crate::{
     color::Color,
-    math::vec2,
+    math::{vec2, Rect},
     models::Vertex,
     quad_gl::{DrawMode, QuadGl},
 };
 
-use super::{Font, FontId, TextDimensions};
+use super::{Font, TextDimensions};
 
 pub(crate) const BASE_FONT_SIZE: f32 = 32.0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PositionedGlyph {
-    pub glyph_id: u16,
+    pub rect: Option<Rect>,
+    pub left: i32,
+    pub top: i32,
     pub x: f32,
     pub y: f32,
 }
@@ -36,114 +32,11 @@ pub struct ShapedText {
     pub dimensions: TextDimensions,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-struct LayoutHash {
-    font: FontId,
-    text: u64,
-    max_width_bits: Option<u32>,
-}
-
-struct LayoutEntry {
-    text: Arc<str>,
-    shaped: Arc<ShapedText>,
-}
-
-struct LayoutCache {
-    entries: HashMap<LayoutHash, Vec<LayoutEntry>>,
-    insertion_order: VecDeque<(LayoutHash, Arc<str>)>,
-    hash_state: RandomState,
-    len: usize,
-}
-
-impl LayoutCache {
-    const CAPACITY: usize = 256;
-
-    fn new() -> Self {
-        Self {
-            entries: HashMap::new(),
-            insertion_order: VecDeque::new(),
-            hash_state: RandomState::default(),
-            len: 0,
-        }
-    }
-
-    fn text_hash(&self, text: &str) -> u64 {
-        self.hash_state.hash_one(text)
-    }
-
-    fn get(&self, font: FontId, text: &str, max_width: Option<f32>) -> Option<Arc<ShapedText>> {
-        let key = LayoutHash {
-            font,
-            text: self.text_hash(text),
-            max_width_bits: max_width.map(f32::to_bits),
-        };
-        self.entries.get(&key).and_then(|bucket| {
-            bucket
-                .iter()
-                .find(|entry| entry.text.as_ref() == text)
-                .map(|entry| entry.shaped.clone())
-        })
-    }
-
-    fn insert(
-        &mut self,
-        font: FontId,
-        text: &str,
-        max_width: Option<f32>,
-        shaped: Arc<ShapedText>,
-    ) {
-        let key = LayoutHash {
-            font,
-            text: self.text_hash(text),
-            max_width_bits: max_width.map(f32::to_bits),
-        };
-        if self
-            .entries
-            .get(&key)
-            .is_some_and(|bucket| bucket.iter().any(|entry| entry.text.as_ref() == text))
-        {
-            return;
-        }
-        while self.len >= Self::CAPACITY {
-            let Some((old_key, old_text)) = self.insertion_order.pop_front() else {
-                break;
-            };
-            let mut remove_bucket = false;
-            if let Some(bucket) = self.entries.get_mut(&old_key) {
-                if let Some(index) = bucket
-                    .iter()
-                    .position(|entry| entry.text.as_ref() == old_text.as_ref())
-                {
-                    bucket.swap_remove(index);
-                    self.len -= 1;
-                }
-                remove_bucket = bucket.is_empty();
-            }
-            if remove_bucket {
-                self.entries.remove(&old_key);
-            }
-        }
-        let owned: Arc<str> = Arc::from(text);
-        self.insertion_order.push_back((key, owned.clone()));
-        self.entries.entry(key).or_default().push(LayoutEntry {
-            text: owned,
-            shaped,
-        });
-        self.len += 1;
-    }
-}
-
-pub(crate) struct TextRenderer {
-    shape_context: ShapeContext,
-    layouts: LayoutCache,
-}
+pub(crate) struct TextRenderer;
 
 impl TextRenderer {
     pub(crate) fn new() -> Self {
-        Self {
-            shape_context: ShapeContext::new(),
-            layouts: LayoutCache::new(),
-        }
+        Self
     }
 
     pub(crate) fn shape(
@@ -153,9 +46,6 @@ impl TextRenderer {
         max_width: Option<f32>,
     ) -> Arc<ShapedText> {
         let max_width = max_width.filter(|width| width.is_finite() && *width > 0.0);
-        if let Some(shaped) = self.layouts.get(font.id(), text, max_width) {
-            return shaped;
-        }
         if text.is_empty() {
             return Arc::new(ShapedText {
                 glyphs: Vec::new(),
@@ -164,9 +54,7 @@ impl TextRenderer {
             });
         }
 
-        let font_ref = font.font_ref();
-        let metrics = font_ref.metrics(&[]).scale(BASE_FONT_SIZE);
-        let line_height = metrics.ascent + metrics.descent + metrics.leading;
+        let line_height = font.data.ascent + font.data.descent + font.data.line_gap;
         let mut glyphs = Vec::new();
         let mut clusters = Vec::new();
         let mut width = 0.0_f32;
@@ -176,56 +64,57 @@ impl TextRenderer {
 
         for (line_index, line) in text.split('\n').enumerate() {
             line_count += 1;
-            let script = line
-                .chars()
-                .map(Codepoint::script)
-                .find(|script| {
-                    !matches!(script, Script::Common | Script::Inherited | Script::Unknown)
-                })
-                .unwrap_or(Script::Latin);
             let mut pen_x = 0.0;
             let mut baseline_y = (line_count - 1) as f32 * line_height;
-            let mut shaper = self
-                .shape_context
-                .builder(font_ref)
-                .script(script)
-                .size(BASE_FONT_SIZE)
-                .features(font.data.shaping.swash_features())
-                .build();
-            shaper.add_str(line);
-            shaper.shape_with(|cluster| {
-                let advance = cluster.advance();
+
+            for (char_byte_offset, ch) in line.char_indices() {
+                let Some(metric) = font.data.get_glyph(ch).or_else(|| font.data.get_glyph('?')) else {
+                    clusters.push(ShapedCluster {
+                        source: source_offset + char_byte_offset
+                            ..source_offset + char_byte_offset + ch.len_utf8(),
+                        glyphs: glyphs.len()..glyphs.len(),
+                    });
+                    continue;
+                };
+
+                let advance = metric.advance;
                 let wrapped =
-                    max_width.is_some_and(|max_width| pen_x > 0.0 && pen_x + advance > max_width);
+                    max_width.is_some_and(|max_w| pen_x > 0.0 && pen_x + advance > max_w);
                 if wrapped {
                     width = width.max(pen_x);
                     pen_x = 0.0;
                     line_count += 1;
                     baseline_y += line_height;
                 }
+
                 let glyph_start = glyphs.len();
-                if wrapped && cluster.info.is_whitespace() {
+                if wrapped && ch.is_whitespace() {
                     clusters.push(ShapedCluster {
-                        source: source_offset + cluster.source.start as usize
-                            ..source_offset + cluster.source.end as usize,
+                        source: source_offset + char_byte_offset
+                            ..source_offset + char_byte_offset + ch.len_utf8(),
                         glyphs: glyph_start..glyph_start,
                     });
-                    return;
+                    continue;
                 }
-                for glyph in cluster.glyphs {
+
+                if let Some(rect) = metric.rect {
                     glyphs.push(PositionedGlyph {
-                        glyph_id: glyph.id,
-                        x: pen_x + glyph.x,
-                        y: baseline_y + glyph.y,
+                        rect: Some(rect),
+                        left: metric.left,
+                        top: metric.top,
+                        x: pen_x,
+                        y: baseline_y,
                     });
-                    pen_x += glyph.advance;
                 }
+                pen_x += advance;
+
                 clusters.push(ShapedCluster {
-                    source: source_offset + cluster.source.start as usize
-                        ..source_offset + cluster.source.end as usize,
+                    source: source_offset + char_byte_offset
+                        ..source_offset + char_byte_offset + ch.len_utf8(),
                     glyphs: glyph_start..glyphs.len(),
                 });
-            });
+            }
+
             width = width.max(pen_x);
             source_offset += line.len();
             if line_index + 1 < explicit_line_count {
@@ -237,18 +126,15 @@ impl TextRenderer {
             }
         }
 
-        let shaped = Arc::new(ShapedText {
+        Arc::new(ShapedText {
             glyphs,
             clusters,
             dimensions: TextDimensions {
                 width,
                 height: line_height * line_count as f32,
-                offset_y: metrics.ascent,
+                offset_y: font.data.ascent,
             },
-        });
-        self.layouts
-            .insert(font.id(), text, max_width, shaped.clone());
-        shaped
+        })
     }
 
     pub(crate) fn measure(
@@ -259,12 +145,29 @@ impl TextRenderer {
         scale_x: f32,
         scale_y: f32,
     ) -> TextDimensions {
-        let dimensions = self.shape(font, text, None).dimensions;
-        let base_scale = requested_pixel_size / BASE_FONT_SIZE;
+        if text.is_empty() {
+            return TextDimensions::default();
+        }
+        let line_height = font.data.ascent + font.data.descent + font.data.line_gap;
+        let mut width = 0.0_f32;
+        let mut line_count = 0usize;
+
+        for line in text.split('\n') {
+            line_count += 1;
+            let mut pen_x = 0.0;
+            for ch in line.chars() {
+                if let Some(metric) = font.data.get_glyph(ch).or_else(|| font.data.get_glyph('?')) {
+                    pen_x += metric.advance;
+                }
+            }
+            width = width.max(pen_x);
+        }
+
+        let base_scale = requested_pixel_size / font.data.base_size;
         TextDimensions {
-            width: dimensions.width * base_scale * scale_x,
-            height: dimensions.height * base_scale * scale_y,
-            offset_y: dimensions.offset_y * base_scale * scale_y,
+            width: width * base_scale * scale_x,
+            height: (line_height * line_count as f32) * base_scale * scale_y,
+            offset_y: font.data.ascent * base_scale * scale_y,
         }
     }
 
@@ -281,24 +184,78 @@ impl TextRenderer {
         rotation: f32,
         color: Color,
         gl: &mut QuadGl,
-        backend: &mut dyn miniquad::RenderingBackend,
+        _backend: &mut dyn miniquad::RenderingBackend,
     ) -> TextDimensions {
-        let shaped = self.shape(font, text, None);
-        self.draw_shaped(
-            font,
-            &shaped,
-            x,
-            y,
-            requested_pixel_size,
-            scale_x,
-            scale_y,
-            rotation,
-            color,
-            None,
-            shaped.clusters.len(),
-            gl,
-            backend,
-        )
+        if text.is_empty() {
+            return TextDimensions::default();
+        }
+
+        let atlas = font.atlas();
+        let texture = atlas.texture();
+        let (atlas_width, atlas_height) = atlas.size();
+        let base_scale = requested_pixel_size / font.data.base_size;
+        let layout_scale_x = base_scale * scale_x;
+        let layout_scale_y = base_scale * scale_y;
+        let cos = rotation.cos();
+        let sin = rotation.sin();
+        let indices = [0, 1, 2, 0, 2, 3];
+
+        let line_height = font.data.ascent + font.data.descent + font.data.line_gap;
+        let mut width = 0.0_f32;
+        let mut line_count = 0usize;
+
+        gl.texture(Some(&texture));
+        gl.draw_mode(DrawMode::Triangles);
+
+        for line in text.split('\n') {
+            line_count += 1;
+            let mut pen_x = 0.0;
+            let baseline_y = (line_count - 1) as f32 * line_height;
+
+            for ch in line.chars() {
+                let Some(metric) = font.data.get_glyph(ch).or_else(|| font.data.get_glyph('?')) else {
+                    continue;
+                };
+
+                if let Some(rect) = metric.rect {
+                    let logical_x = pen_x * layout_scale_x + metric.left as f32 * layout_scale_x;
+                    let logical_y =
+                        baseline_y * layout_scale_y - metric.top as f32 * layout_scale_y;
+                    let dest_x = x + logical_x * cos - logical_y * sin;
+                    let dest_y = y + logical_x * sin + logical_y * cos;
+                    let w = rect.w * layout_scale_x;
+                    let h = rect.h * layout_scale_y;
+
+                    let p = [
+                        vec2(dest_x, dest_y),
+                        vec2(dest_x + w * cos, dest_y + w * sin),
+                        vec2(dest_x + w * cos - h * sin, dest_y + w * sin + h * cos),
+                        vec2(dest_x - h * sin, dest_y + h * cos),
+                    ];
+                    let sx = rect.x / atlas_width;
+                    let sy = rect.y / atlas_height;
+                    let sw = rect.w / atlas_width;
+                    let sh = rect.h / atlas_height;
+                    let vertices = [
+                        Vertex::new(p[0].x, p[0].y, 0.0, sx, sy, color),
+                        Vertex::new(p[1].x, p[1].y, 0.0, sx + sw, sy, color),
+                        Vertex::new(p[2].x, p[2].y, 0.0, sx + sw, sy + sh, color),
+                        Vertex::new(p[3].x, p[3].y, 0.0, sx, sy + sh, color),
+                    ];
+                    gl.geometry(&vertices, &indices);
+                }
+
+                pen_x += metric.advance;
+            }
+
+            width = width.max(pen_x);
+        }
+
+        TextDimensions {
+            width: width * layout_scale_x,
+            height: (line_height * line_count as f32) * layout_scale_y,
+            offset_y: font.data.ascent * layout_scale_y,
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -322,16 +279,16 @@ impl TextRenderer {
         let atlas = font.atlas();
         let texture = atlas.texture();
         let (atlas_width, atlas_height) = atlas.size();
-        let layout_scale_x = requested_pixel_size / BASE_FONT_SIZE * scale_x;
-        let layout_scale_y = requested_pixel_size / BASE_FONT_SIZE * scale_y;
-        let image_scale_x = requested_pixel_size / font.raster_size() * scale_x;
-        let image_scale_y = requested_pixel_size / font.raster_size() * scale_y;
+        let base_scale = requested_pixel_size / font.data.base_size;
+        let layout_scale_x = base_scale * scale_x;
+        let layout_scale_y = base_scale * scale_y;
         let cos = rotation.cos();
         let sin = rotation.sin();
         let indices = [0, 1, 2, 0, 2, 3];
 
         gl.texture(Some(&texture));
         gl.draw_mode(DrawMode::Triangles);
+
         for (cluster_index, cluster) in shaped.clusters[..visible_clusters].iter().enumerate() {
             let cluster_color = cluster_colors
                 .and_then(|colors| colors.get(cluster_index))
@@ -339,18 +296,15 @@ impl TextRenderer {
                 .flatten()
                 .unwrap_or(color);
             for glyph in &shaped.glyphs[cluster.glyphs.clone()] {
-                let Some(info) = font.glyph(glyph.glyph_id) else {
+                let Some(rect) = glyph.rect else {
                     continue;
                 };
-                let Some(rect) = info.rect else {
-                    continue;
-                };
-                let logical_x = glyph.x * layout_scale_x + info.left as f32 * image_scale_x;
-                let logical_y = glyph.y * layout_scale_y - info.top as f32 * image_scale_y;
+                let logical_x = glyph.x * layout_scale_x + glyph.left as f32 * layout_scale_x;
+                let logical_y = glyph.y * layout_scale_y - glyph.top as f32 * layout_scale_y;
                 let dest_x = x + logical_x * cos - logical_y * sin;
                 let dest_y = y + logical_x * sin + logical_y * cos;
-                let width = rect.w * image_scale_x;
-                let height = rect.h * image_scale_y;
+                let width = rect.w * layout_scale_x;
+                let height = rect.h * layout_scale_y;
                 let p = [
                     vec2(dest_x, dest_y),
                     vec2(dest_x + width * cos, dest_y + width * sin),
@@ -386,20 +340,13 @@ impl TextRenderer {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "font-rasterize")]
     fn test_font() -> Font {
         Font::load_for_test(include_bytes!("../../assets/fonts/ProggyClean.ttf")).unwrap()
     }
 
     #[test]
-    fn combining_sequence_is_one_reveal_cluster() {
-        let mut renderer = TextRenderer::new();
-        let shaped = renderer.shape(&test_font(), "e\u{301}", None);
-
-        assert_eq!(shaped.clusters.len(), 1);
-        assert_eq!(shaped.clusters[0].source, 0.."e\u{301}".len());
-    }
-
-    #[test]
+    #[cfg(feature = "font-rasterize")]
     fn explicit_newline_has_a_reveal_cluster() {
         let mut renderer = TextRenderer::new();
         let shaped = renderer.shape(&test_font(), "a\nb", None);
@@ -413,6 +360,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "font-rasterize")]
     fn maximum_width_wraps_without_reshaping_each_character() {
         let mut renderer = TextRenderer::new();
         let font = test_font();

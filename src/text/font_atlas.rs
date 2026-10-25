@@ -18,6 +18,22 @@ impl FontAtlas {
     pub(crate) const fn size(&self) -> (f32, f32) {
         (self.width as f32, self.height as f32)
     }
+
+    pub(crate) fn from_rgba8(
+        width: u16,
+        height: u16,
+        bytes: &[u8],
+        filter: miniquad::FilterMode,
+        ctx: &mut dyn miniquad::RenderingBackend,
+    ) -> Self {
+        let texture = ctx.new_texture_from_rgba8(width, height, bytes);
+        ctx.texture_set_filter(texture, filter, miniquad::MipmapFilterMode::None);
+        Self {
+            texture,
+            width,
+            height,
+        }
+    }
 }
 
 impl Drop for FontAtlas {
@@ -31,7 +47,6 @@ pub(crate) struct FontAtlasBuilder {
     cursor_x: u16,
     cursor_y: u16,
     row_height: u16,
-    filter: miniquad::FilterMode,
 }
 
 impl FontAtlasBuilder {
@@ -41,7 +56,7 @@ impl FontAtlasBuilder {
     const WIDTH: u16 = 1024;
     const HEIGHT: u16 = 1024;
 
-    pub(crate) fn new(filter: miniquad::FilterMode) -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             image: Image::gen_image_color(
                 Self::WIDTH,
@@ -51,7 +66,6 @@ impl FontAtlasBuilder {
             cursor_x: 0,
             cursor_y: 0,
             row_height: 0,
-            filter,
         }
     }
 
@@ -129,15 +143,8 @@ impl FontAtlasBuilder {
         Some(())
     }
 
-    pub(crate) fn finish(self, ctx: &mut dyn miniquad::RenderingBackend) -> FontAtlas {
-        let texture =
-            ctx.new_texture_from_rgba8(self.image.width, self.image.height, &self.image.bytes);
-        ctx.texture_set_filter(texture, self.filter, miniquad::MipmapFilterMode::None);
-        FontAtlas {
-            texture,
-            width: self.image.width,
-            height: self.image.height,
-        }
+    pub(crate) fn into_image(self) -> Image {
+        self.image
     }
 }
 
@@ -152,7 +159,6 @@ mod tests {
             cursor_x: 0,
             cursor_y: 0,
             row_height: 0,
-            filter: miniquad::FilterMode::Linear,
         };
         let glyph = Image::gen_image_color(5, 5, crate::Color::new(1.0, 1.0, 1.0, 1.0));
 

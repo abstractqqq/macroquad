@@ -1,3 +1,5 @@
+#![cfg(feature = "font-rasterize")]
+
 use swash::{
     scale::{image::Content, Render, ScaleContext, Source, StrikeWith},
     zeno::Format,

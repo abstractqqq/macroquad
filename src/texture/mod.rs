@@ -10,7 +10,7 @@ use crate::slotmap::{DefaultKey as TextureSlotId, SlotMap};
 use glam::{vec2, Vec2};
 use std::{io::Cursor, sync::Arc};
 
-fn decode_png_rgba8(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), Error> {
+pub(crate) fn decode_png_rgba8(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), Error> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_ignore_text_chunk(true);
     decoder.set_transformations(png::Transformations::ALPHA | png::Transformations::STRIP_16);

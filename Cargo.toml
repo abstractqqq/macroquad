@@ -19,8 +19,8 @@ audio = [
 3d = []
 log-rs = ["log"]
 glam-serde = ["glam/serde"]
-default = []
-rich-text = ["dep:parley"]
+default = ["font-rasterize"]
+font-rasterize = ["dep:swash"]
 
 [package.metadata.android]
 assets = "examples/"
@@ -37,8 +37,7 @@ quad-rand = "0.2.3"
 glam = { version = "0.27", features = ["scalar-math"] }
 png = "0.18"
 foldhash = "0.2"
-parley = { version = "0.11", optional = true, default-features = false, features = ["std"] }
-swash = "0.2"
+swash = { version = "0.2", optional = true }
 backtrace = { version = "0.3.60", optional = true }
 log = { version = "0.4", optional = true }
 
@@ -74,16 +73,6 @@ required-features = ["3d"]
 name = "first_person"
 path = "examples/first_person.rs"
 required-features = ["3d"]
-
-[[example]]
-name = "rich_text_comparison"
-path = "examples/rich_text_comparison.rs"
-required-features = ["rich-text"]
-
-[[example]]
-name = "rich_text_comparison_chinese"
-path = "examples/rich_text_comparison_chinese.rs"
-required-features = ["rich-text"]
 
 # workaround to fix the examples
 # this allows companion crates in examples without two versions of rayquad
