@@ -16,11 +16,13 @@ The main intentional differences from upstream Macroquad are:
 - **No built-in immediate-mode UI:** the bundled UI module, UI feature, UI
   examples, and UI-based profiler were removed. Applications can choose an
   external UI library without RayQuad owning a second input and rendering path.
-- **Raylib-style fonts:** loading a font constructs its complete immutable glyph
-  atlas. Drawing scales that atlas and never rasterizes glyphs, grows a font
-  texture, or uploads font data during gameplay. Use `FontLoadParams` with an
-  explicit character repertoire or complete strings when the default repertoire
-  is insufficient; complete strings collect ligatures and contextual forms.
+- **Raylib-style shapeless fonts:** loading a font constructs a complete immutable
+  glyph atlas and metric table. Text rendering bypasses complex OpenType shaping
+  engines (no HarfBuzz, no Parley, no runtime font parsing) and streams quads
+  directly into the vertex batcher with zero heap allocations. Drawing scales that
+  atlas and never rasterizes glyphs, grows textures, or uploads font data during gameplay.
+  Use `FontLoadParams` with an explicit character repertoire when the default ASCII
+  repertoire is insufficient.
 - **Shader-friendly text:** text uses the currently active material, matching the
   Raylib pattern of activating a font shader around text drawing.
 - **Explicit entry point:** applications call `Window::new` or
@@ -67,7 +69,50 @@ The main intentional differences from upstream Macroquad are:
 - Updated coroutine memory telemetry to describe its SlotMap-based estimate.
 
 
-## Old Macroquad README
+## Text & Font Pipeline
+
+RayQuad uses a high-performance **shapeless text pipeline** modeled after Raylib and custom grand-strategy 2D game engines.
+
+### Why Shapeless?
+Complex text shaping engines (such as HarfBuzz, Swash shaping passes, or Parley) are designed for rich word processors and complex script joining (Arabic, Devanagari). For 2D games, strategy titles, dense tables, and HUDs displaying Latin and CJK text, runtime shaping introduces heavy heap allocations, script classification overhead, and cache pressure on every frame.
+
+RayQuad separates font processing into two distinct modes:
+
+```
+[ Development Mode (feature = "font-rasterize") ]
+    .ttf / .otf  ──►  Swash Scaler  ──►  In-Memory Atlas & Metrics  ──►  Streaming Renderer
+                                                  │
+                                                  ▼ (Offline Bake)
+[ Production Mode (no font dependencies) ]    .bin + .png
+    .bin Metrics ──► Memory Table   ──────────────┘
+    .png Atlas   ──► GPU Texture    ──►  Zero-allocation Quad Streamer (QuadGl)
+```
+
+1. **Development Mode (`font-rasterize`, default):**
+   - Automatically rasterizes `.ttf` / `.otf` files on the fly into an immutable atlas using Swash.
+   - Ideal for rapid iteration, prototyping, and hot reloading.
+   ```rust
+   let font = load_ttf_font("assets/my_font.ttf").await?;
+   ```
+
+2. **Production Mode (`--no-default-features`):**
+   - Loads pre-baked `.bin` metric binary and `.png` texture atlas.
+   - **Zero TTF parsing or shaping dependencies** compiled into the binary.
+   - Near-instant startup times with minimal memory footprint.
+   ```rust
+   let font = load_baked_font("assets/my_font.bin", "assets/my_font.png", FilterMode::Linear).await?;
+   // Or statically embed:
+   let font = load_baked_font_from_bytes(
+       include_bytes!("../assets/fonts/ProggyClean.bin"),
+       include_bytes!("../assets/fonts/ProggyClean.png"),
+       FilterMode::Nearest,
+   )?;
+   ```
+
+3. **Offline Font Baking Tooling:**
+   - Pre-bake fonts ahead of time using `FontData::bake_from_ttf_bytes` or `font.export_baked("font.bin", "font.png")`.
+   - See `examples/bake_font.rs` for a full working example of baking fonts during an asset build step.
+
 
 ## Features
 
