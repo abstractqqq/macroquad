@@ -485,6 +485,7 @@ impl PipelinesStorage {
                 VertexAttribute::new("position", VertexFormat::Float3),
                 VertexAttribute::new("texcoord", VertexFormat::Float2),
                 VertexAttribute::new("color0", VertexFormat::Byte4),
+                #[cfg(feature = "3d")]
                 VertexAttribute::new("normal", VertexFormat::Float4),
             ],
             shader,
@@ -1046,11 +1047,30 @@ impl QuadGl {
 mod shader {
     use miniquad::{ShaderMeta, UniformBlockLayout, UniformDesc, UniformType};
 
+    #[cfg(feature = "3d")]
     pub const VERTEX: &str = r#"#version 100
     attribute vec3 position;
     attribute vec2 texcoord;
     attribute vec4 color0;
     attribute vec4 normal;
+
+    varying lowp vec2 uv;
+    varying lowp vec4 color;
+
+    uniform mat4 Model;
+    uniform mat4 Projection;
+
+    void main() {
+        gl_Position = Projection * Model * vec4(position, 1);
+        color = color0 / 255.0;
+        uv = texcoord;
+    }"#;
+
+    #[cfg(not(feature = "3d"))]
+    pub const VERTEX: &str = r#"#version 100
+    attribute vec3 position;
+    attribute vec2 texcoord;
+    attribute vec4 color0;
 
     varying lowp vec2 uv;
     varying lowp vec4 color;

@@ -579,33 +579,42 @@ pub fn draw_texture_ex(
         h = -h;
     }
 
-    let pivot = params.pivot.unwrap_or(vec2(x + w / 2., y + h / 2.));
-    let m = pivot;
-    let p = [
-        vec2(x, y) - pivot,
-        vec2(x + w, y) - pivot,
-        vec2(x + w, y + h) - pivot,
-        vec2(x, y + h) - pivot,
-    ];
-    let r = params.rotation;
-    let p = [
-        vec2(
-            p[0].x * r.cos() - p[0].y * r.sin(),
-            p[0].x * r.sin() + p[0].y * r.cos(),
-        ) + m,
-        vec2(
-            p[1].x * r.cos() - p[1].y * r.sin(),
-            p[1].x * r.sin() + p[1].y * r.cos(),
-        ) + m,
-        vec2(
-            p[2].x * r.cos() - p[2].y * r.sin(),
-            p[2].x * r.sin() + p[2].y * r.cos(),
-        ) + m,
-        vec2(
-            p[3].x * r.cos() - p[3].y * r.sin(),
-            p[3].x * r.sin() + p[3].y * r.cos(),
-        ) + m,
-    ];
+    let p = if params.rotation == 0.0 {
+        [
+            vec2(x, y),
+            vec2(x + w, y),
+            vec2(x + w, y + h),
+            vec2(x, y + h),
+        ]
+    } else {
+        let pivot = params.pivot.unwrap_or(vec2(x + w / 2., y + h / 2.));
+        let m = pivot;
+        let p = [
+            vec2(x, y) - pivot,
+            vec2(x + w, y) - pivot,
+            vec2(x + w, y + h) - pivot,
+            vec2(x, y + h) - pivot,
+        ];
+        let r = params.rotation;
+        [
+            vec2(
+                p[0].x * r.cos() - p[0].y * r.sin(),
+                p[0].x * r.sin() + p[0].y * r.cos(),
+            ) + m,
+            vec2(
+                p[1].x * r.cos() - p[1].y * r.sin(),
+                p[1].x * r.sin() + p[1].y * r.cos(),
+            ) + m,
+            vec2(
+                p[2].x * r.cos() - p[2].y * r.sin(),
+                p[2].x * r.sin() + p[2].y * r.cos(),
+            ) + m,
+            vec2(
+                p[3].x * r.cos() - p[3].y * r.sin(),
+                p[3].x * r.sin() + p[3].y * r.cos(),
+            ) + m,
+        ]
+    };
     #[rustfmt::skip]
     let vertices = [
         Vertex::new(p[0].x, p[0].y, 0.,  sx      /width,  sy      /height, color),

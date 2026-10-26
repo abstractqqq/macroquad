@@ -4,6 +4,12 @@ use crate::{color::Color, get_context};
 
 use crate::quad_gl::{DrawMode, Vertex};
 use glam::{vec2, vec3, vec4, Mat4, Vec2};
+use std::cell::RefCell;
+
+thread_local! {
+    static SHAPES_SCRATCH: RefCell<(Vec<Vertex>, Vec<u16>)> =
+        RefCell::new((Vec::new(), Vec::new()));
+}
 
 /// Draws a solid triangle between points `v1`, `v2`, and `v3` with a given `color`.
 pub fn draw_triangle(v1: Vec2, v2: Vec2, v3: Vec2, color: Color) {
@@ -210,28 +216,34 @@ pub fn draw_hexagon(
 /// clockwise `rotation` (in degrees) and `color`.
 pub fn draw_poly(x: f32, y: f32, sides: u8, radius: f32, rotation: f32, color: Color) {
     let context = get_context();
-
-    let mut vertices = Vec::<Vertex>::with_capacity(sides as usize + 2);
-    let mut indices = Vec::<u16>::with_capacity(sides as usize * 3);
-
     let rot = rotation.to_radians();
-    vertices.push(Vertex::new(x, y, 0., 0., 0., color));
-    for i in 0..=sides {
-        let rx = (i as f32 / sides as f32 * std::f32::consts::PI * 2. + rot).cos();
-        let ry = (i as f32 / sides as f32 * std::f32::consts::PI * 2. + rot).sin();
 
-        let vertex = Vertex::new(x + radius * rx, y + radius * ry, 0., rx, ry, color);
+    SHAPES_SCRATCH.with(|scratch| {
+        let (vertices, indices) = &mut *scratch.borrow_mut();
+        vertices.clear();
+        indices.clear();
 
-        vertices.push(vertex);
+        vertices.reserve(sides as usize + 2);
+        indices.reserve(sides as usize * 3);
 
-        if i != sides {
-            indices.extend_from_slice(&[0, i as u16 + 1, i as u16 + 2]);
+        vertices.push(Vertex::new(x, y, 0., 0., 0., color));
+        for i in 0..=sides {
+            let rx = (i as f32 / sides as f32 * std::f32::consts::PI * 2. + rot).cos();
+            let ry = (i as f32 / sides as f32 * std::f32::consts::PI * 2. + rot).sin();
+
+            let vertex = Vertex::new(x + radius * rx, y + radius * ry, 0., rx, ry, color);
+
+            vertices.push(vertex);
+
+            if i != sides {
+                indices.extend_from_slice(&[0, i as u16 + 1, i as u16 + 2]);
+            }
         }
-    }
 
-    context.gl.texture(None);
-    context.gl.draw_mode(DrawMode::Triangles);
-    context.gl.geometry(&vertices, &indices);
+        context.gl.texture(None);
+        context.gl.draw_mode(DrawMode::Triangles);
+        context.gl.geometry(vertices, indices);
+    });
 }
 
 /// Draws a regular polygon outline centered at `[x, y]` with a given number of `sides`, `radius`,
@@ -269,34 +281,40 @@ pub fn draw_circle_lines(x: f32, y: f32, r: f32, thickness: f32, color: Color) {
 pub fn draw_ellipse(x: f32, y: f32, w: f32, h: f32, rotation: f32, color: Color) {
     let sides = 20;
     let context = get_context();
-
-    let mut vertices = Vec::<Vertex>::with_capacity(sides as usize + 2);
-    let mut indices = Vec::<u16>::with_capacity(sides as usize * 3);
-
     let rot = rotation.to_radians();
     let sr = rot.sin();
     let cr = rot.cos();
-    vertices.push(Vertex::new(x, y, 0., 0., 0., color));
-    for i in 0..=sides {
-        let rx = (i as f32 / sides as f32 * std::f32::consts::PI * 2.).cos();
-        let ry = (i as f32 / sides as f32 * std::f32::consts::PI * 2.).sin();
 
-        let px = w * rx;
-        let py = h * ry;
-        let rotated_x = px * cr - py * sr;
-        let rotated_y = py * cr + px * sr;
-        let vertex = Vertex::new(x + rotated_x, y + rotated_y, 0., rx, ry, color);
+    SHAPES_SCRATCH.with(|scratch| {
+        let (vertices, indices) = &mut *scratch.borrow_mut();
+        vertices.clear();
+        indices.clear();
 
-        vertices.push(vertex);
+        vertices.reserve(sides as usize + 2);
+        indices.reserve(sides as usize * 3);
 
-        if i != sides {
-            indices.extend_from_slice(&[0, i as u16 + 1, i as u16 + 2]);
+        vertices.push(Vertex::new(x, y, 0., 0., 0., color));
+        for i in 0..=sides {
+            let rx = (i as f32 / sides as f32 * std::f32::consts::PI * 2.).cos();
+            let ry = (i as f32 / sides as f32 * std::f32::consts::PI * 2.).sin();
+
+            let px = w * rx;
+            let py = h * ry;
+            let rotated_x = px * cr - py * sr;
+            let rotated_y = py * cr + px * sr;
+            let vertex = Vertex::new(x + rotated_x, y + rotated_y, 0., rx, ry, color);
+
+            vertices.push(vertex);
+
+            if i != sides {
+                indices.extend_from_slice(&[0, i as u16 + 1, i as u16 + 2]);
+            }
         }
-    }
 
-    context.gl.texture(None);
-    context.gl.draw_mode(DrawMode::Triangles);
-    context.gl.geometry(&vertices, &indices);
+        context.gl.texture(None);
+        context.gl.draw_mode(DrawMode::Triangles);
+        context.gl.geometry(vertices, indices);
+    });
 }
 
 /// Draws an ellipse outline centered at `[x, y]` with a given size `[w, h]`,
@@ -394,25 +412,31 @@ pub fn draw_arc(
     context.gl.texture(None);
     context.gl.draw_mode(DrawMode::Triangles);
 
-    let mut verticies = Vec::<Vertex>::with_capacity(sides * 2);
-    let mut indicies = Vec::<u16>::with_capacity(sides * 2);
+    SHAPES_SCRATCH.with(|scratch| {
+        let (verticies, indicies) = &mut *scratch.borrow_mut();
+        verticies.clear();
+        indicies.clear();
 
-    for i in 0..sides {
-        let start_angle = i as f32 * span + rot;
-        let end_angle = start_angle + span;
+        verticies.reserve(sides * 4);
+        indicies.reserve(sides * 6);
 
-        indicies.extend([0, 1, 2, 2, 1, 3].map(|k| k + (verticies.len() as u16)));
+        for i in 0..sides {
+            let start_angle = i as f32 * span + rot;
+            let end_angle = start_angle + span;
 
-        for (angle, radius) in [
-            (start_angle, radius),
-            (start_angle, radius + thickness),
-            (end_angle, radius),
-            (end_angle, radius + thickness),
-        ] {
-            let point = Vec2::new(x, y) + radius * Vec2::from_angle(angle);
-            verticies.push(Vertex::new(point.x, point.y, 0., 0., 0., color));
+            indicies.extend([0, 1, 2, 2, 1, 3].map(|k| k + (verticies.len() as u16)));
+
+            for (angle, radius) in [
+                (start_angle, radius),
+                (start_angle, radius + thickness),
+                (end_angle, radius),
+                (end_angle, radius + thickness),
+            ] {
+                let point = Vec2::new(x, y) + radius * Vec2::from_angle(angle);
+                verticies.push(Vertex::new(point.x, point.y, 0., 0., 0., color));
+            }
         }
-    }
 
-    context.gl.geometry(&verticies, &indicies);
+        context.gl.geometry(verticies, indicies);
+    });
 }

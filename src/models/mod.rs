@@ -18,6 +18,7 @@ pub struct Vertex {
     /// Might be usefull for custom shaders.
     /// While normal is not used by rayquad, it is completely safe to use it
     /// to pass arbitary user data, hence Vec4.
+    #[cfg(feature = "3d")]
     pub normal: Vec4,
 }
 
@@ -27,6 +28,7 @@ impl Vertex {
             position: vec3(x, y, z),
             uv: vec2(u, v),
             color: color.into(),
+            #[cfg(feature = "3d")]
             normal: vec4(0.0, 0.0, 0.0, 0.0),
         }
     }

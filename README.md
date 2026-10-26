@@ -67,6 +67,19 @@ The main intentional differences from upstream Macroquad are:
   generational keys.
 - Replaced the `color_u8!` macro with a typed `const fn` named `color_u8`.
 - Updated coroutine memory telemetry to describe its SlotMap-based estimate.
+- **Zero-allocation 2D shape rendering:** `draw_poly`, `draw_circle`, `draw_ellipse`,
+  and `draw_arc` reuse thread-local scratch buffers (`SHAPES_SCRATCH`), eliminating
+  all per-shape heap allocations (`Vec::with_capacity` churn) during the frame loop.
+- **24-byte 2D Vertex layout:** gated the unused 16-byte `normal: Vec4` attribute
+  under the `3d` feature, shrinking `Vertex` from 40 bytes to 24 bytes in 2D mode
+  and reducing vertex buffer bus traffic and CPU cache footprint by 40%.
+- **Unrotated sprite fast-path:** `draw_texture_ex` bypasses pivot and trigonometric
+  math (`sin`, `cos`) when `rotation == 0.0`, accelerating typical 2D tile and
+  sprite quad generation.
+- **Block-level text batching:** `TextRenderer` aggregates all character glyph
+  quads across a text string into internal scratch buffers and dispatches a single
+  batch draw call to `QuadGl` per text block instead of one draw call per glyph,
+  with an unrotated fast-path for layout coordinates.
 
 
 ## Text & Font Pipeline

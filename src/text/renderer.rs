@@ -32,11 +32,17 @@ pub struct ShapedText {
     pub dimensions: TextDimensions,
 }
 
-pub(crate) struct TextRenderer;
+pub(crate) struct TextRenderer {
+    batch_vertices: Vec<Vertex>,
+    batch_indices: Vec<u16>,
+}
 
 impl TextRenderer {
     pub(crate) fn new() -> Self {
-        Self
+        Self {
+            batch_vertices: Vec::with_capacity(128),
+            batch_indices: Vec::with_capacity(192),
+        }
     }
 
     pub(crate) fn shape(
@@ -207,6 +213,9 @@ impl TextRenderer {
         gl.texture(Some(&texture));
         gl.draw_mode(DrawMode::Triangles);
 
+        self.batch_vertices.clear();
+        self.batch_indices.clear();
+
         for line in text.split('\n') {
             line_count += 1;
             let mut pen_x = 0.0;
@@ -221,34 +230,62 @@ impl TextRenderer {
                     let logical_x = pen_x * layout_scale_x + metric.left as f32 * layout_scale_x;
                     let logical_y =
                         baseline_y * layout_scale_y - metric.top as f32 * layout_scale_y;
-                    let dest_x = x + logical_x * cos - logical_y * sin;
-                    let dest_y = y + logical_x * sin + logical_y * cos;
+                    let (dest_x, dest_y) = if rotation == 0.0 {
+                        (x + logical_x, y + logical_y)
+                    } else {
+                        (
+                            x + logical_x * cos - logical_y * sin,
+                            y + logical_x * sin + logical_y * cos,
+                        )
+                    };
                     let w = rect.w * layout_scale_x;
                     let h = rect.h * layout_scale_y;
 
-                    let p = [
-                        vec2(dest_x, dest_y),
-                        vec2(dest_x + w * cos, dest_y + w * sin),
-                        vec2(dest_x + w * cos - h * sin, dest_y + w * sin + h * cos),
-                        vec2(dest_x - h * sin, dest_y + h * cos),
-                    ];
+                    let p = if rotation == 0.0 {
+                        [
+                            vec2(dest_x, dest_y),
+                            vec2(dest_x + w, dest_y),
+                            vec2(dest_x + w, dest_y + h),
+                            vec2(dest_x, dest_y + h),
+                        ]
+                    } else {
+                        [
+                            vec2(dest_x, dest_y),
+                            vec2(dest_x + w * cos, dest_y + w * sin),
+                            vec2(dest_x + w * cos - h * sin, dest_y + w * sin + h * cos),
+                            vec2(dest_x - h * sin, dest_y + h * cos),
+                        ]
+                    };
                     let sx = rect.x / atlas_width;
                     let sy = rect.y / atlas_height;
                     let sw = rect.w / atlas_width;
                     let sh = rect.h / atlas_height;
-                    let vertices = [
+
+                    let base_idx = self.batch_vertices.len() as u16;
+                    self.batch_vertices.extend([
                         Vertex::new(p[0].x, p[0].y, 0.0, sx, sy, color),
                         Vertex::new(p[1].x, p[1].y, 0.0, sx + sw, sy, color),
                         Vertex::new(p[2].x, p[2].y, 0.0, sx + sw, sy + sh, color),
                         Vertex::new(p[3].x, p[3].y, 0.0, sx, sy + sh, color),
-                    ];
-                    gl.geometry(&vertices, &indices);
+                    ]);
+                    self.batch_indices.extend([
+                        base_idx,
+                        base_idx + 1,
+                        base_idx + 2,
+                        base_idx,
+                        base_idx + 2,
+                        base_idx + 3,
+                    ]);
                 }
 
                 pen_x += metric.advance;
             }
 
             width = width.max(pen_x);
+        }
+
+        if !self.batch_vertices.is_empty() {
+            gl.geometry(&self.batch_vertices, &self.batch_indices);
         }
 
         TextDimensions {
@@ -289,6 +326,9 @@ impl TextRenderer {
         gl.texture(Some(&texture));
         gl.draw_mode(DrawMode::Triangles);
 
+        self.batch_vertices.clear();
+        self.batch_indices.clear();
+
         for (cluster_index, cluster) in shaped.clusters[..visible_clusters].iter().enumerate() {
             let cluster_color = cluster_colors
                 .and_then(|colors| colors.get(cluster_index))
@@ -301,31 +341,59 @@ impl TextRenderer {
                 };
                 let logical_x = glyph.x * layout_scale_x + glyph.left as f32 * layout_scale_x;
                 let logical_y = glyph.y * layout_scale_y - glyph.top as f32 * layout_scale_y;
-                let dest_x = x + logical_x * cos - logical_y * sin;
-                let dest_y = y + logical_x * sin + logical_y * cos;
+                let (dest_x, dest_y) = if rotation == 0.0 {
+                    (x + logical_x, y + logical_y)
+                } else {
+                    (
+                        x + logical_x * cos - logical_y * sin,
+                        y + logical_x * sin + logical_y * cos,
+                    )
+                };
                 let width = rect.w * layout_scale_x;
                 let height = rect.h * layout_scale_y;
-                let p = [
-                    vec2(dest_x, dest_y),
-                    vec2(dest_x + width * cos, dest_y + width * sin),
-                    vec2(
-                        dest_x + width * cos - height * sin,
-                        dest_y + width * sin + height * cos,
-                    ),
-                    vec2(dest_x - height * sin, dest_y + height * cos),
-                ];
+                let p = if rotation == 0.0 {
+                    [
+                        vec2(dest_x, dest_y),
+                        vec2(dest_x + width, dest_y),
+                        vec2(dest_x + width, dest_y + height),
+                        vec2(dest_x, dest_y + height),
+                    ]
+                } else {
+                    [
+                        vec2(dest_x, dest_y),
+                        vec2(dest_x + width * cos, dest_y + width * sin),
+                        vec2(
+                            dest_x + width * cos - height * sin,
+                            dest_y + width * sin + height * cos,
+                        ),
+                        vec2(dest_x - height * sin, dest_y + height * cos),
+                    ]
+                };
                 let sx = rect.x / atlas_width;
                 let sy = rect.y / atlas_height;
                 let sw = rect.w / atlas_width;
                 let sh = rect.h / atlas_height;
-                let vertices = [
+
+                let base_idx = self.batch_vertices.len() as u16;
+                self.batch_vertices.extend([
                     Vertex::new(p[0].x, p[0].y, 0.0, sx, sy, cluster_color),
                     Vertex::new(p[1].x, p[1].y, 0.0, sx + sw, sy, cluster_color),
                     Vertex::new(p[2].x, p[2].y, 0.0, sx + sw, sy + sh, cluster_color),
                     Vertex::new(p[3].x, p[3].y, 0.0, sx, sy + sh, cluster_color),
-                ];
-                gl.geometry(&vertices, &indices);
+                ]);
+                self.batch_indices.extend([
+                    base_idx,
+                    base_idx + 1,
+                    base_idx + 2,
+                    base_idx,
+                    base_idx + 2,
+                    base_idx + 3,
+                ]);
             }
+        }
+
+        if !self.batch_vertices.is_empty() {
+            gl.geometry(&self.batch_vertices, &self.batch_indices);
         }
 
         TextDimensions {
