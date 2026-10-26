@@ -13,60 +13,39 @@ Macroquad.
 
 The main intentional differences from upstream Macroquad are:
 
-- **No built-in immediate-mode UI:** the bundled UI module, UI feature, UI
-  examples, and UI-based profiler were removed. Applications can choose an
-  external UI library without RayQuad owning a second input and rendering path.
-- **Raylib-style shapeless fonts:** loading a font constructs a complete immutable
-  glyph atlas and metric table. Text rendering bypasses complex OpenType shaping
+- **Pure polling input & no built-in UI:** removed the bundled UI module, UI feature,
+  and the synthetic event recording and replay queue (`MiniquadInputEvent`, `input::utils`).
+  Window callbacks update input state directly into compact state arrays and queues
+  (`keyboard`, `mouse_buttons`, `chars_pressed_queue`) with zero intermediate event allocations
+  or dispatch loops. Both game code and external tools query standard polling APIs
+  (`mouse_position()`, `is_mouse_button_down()`, `get_char_pressed()`, `is_key_pressed()`).
+- **Developer-managed texture atlases (Raylib model):** removed Macroquad's runtime
+  texture atlas packer (`build_textures_atlas()`, `reset_textures_atlas()`, and
+  `texture::Batcher`). Games manage their own sprite sheets and atlases directly.
+  This eliminates an automatic 4.2 MB CPU RAM image allocation and 4 MB GPU VRAM texture
+  allocation on engine startup, removes 120 bytes from `Context`, and simplifies
+  `draw_texture_ex` to render directly from the specified texture without dynamic UV remapping.
+- **Lean Context footprint and unified clock:** reduced initial pre-allocations across
+  sub-contexts (coroutine slotmap pre-allocation lowered from 1,000 to 50 slots;
+  deferred texture deletion queue lowered from 200 to 100 slots). Removed redundant
+  `start_time` from `QuadGl`, unifying shader `_Time` with `rayquad::time::get_time()`.
+- **Raylib-style shapeless fonts:** text rendering bypasses complex OpenType shaping
   engines (no HarfBuzz, no Parley, no runtime font parsing) and streams quads
-  directly into the vertex batcher with zero heap allocations. Drawing scales that
-  atlas and never rasterizes glyphs, grows textures, or uploads font data during gameplay.
-  Use `FontLoadParams` with an explicit character repertoire when the default ASCII
-  repertoire is insufficient.
+  directly into the vertex batcher with zero per-string heap allocations. In development,
+  fonts rasterize on the fly via Swash (`font-rasterize`). In production, pre-baked
+  `.bin` metrics and `.png` atlases load instantly with zero font parsing dependencies.
 - **Shader-friendly text:** text uses the currently active material, matching the
   Raylib pattern of activating a font shader around text drawing.
-- **Explicit entry point:** applications call `Window::new` or
-  `Window::from_config` directly; RayQuad has no companion procedural-macro
-  crate.
-- **No built-in scene graph:** the experimental hierarchical scene system,
+- **Block-level text batching:** `TextRenderer` aggregates character glyph quads
+  across a text string into internal scratch buffers and dispatches a single
+  batch draw call to `QuadGl` per text block instead of one draw call per glyph,
+  with an unrotated fast-path for layout coordinates.
+- **Explicit entry point:** applications call `Window::new` or `Window::from_config`
+  directly; RayQuad has no companion procedural-macro crate.
+- **No built-in scene graph:** removed the experimental hierarchical scene system,
   arena-backed node storage, scene state machine, scene-based coroutine tweens,
-  and their runtime and telemetry hooks were removed. RayQuad keeps the
-  application frame loop authoritative instead of mixing explicit
-  immediate-mode control flow with an implicit tree of lifecycle callbacks.
-  Games can use ordinary Rust ownership, flat collections, or an external ECS;
-  specialized hierarchies such as UI layout and transform parenting do not need
-  to become a universal world model.
-- **Inspectable public data:** fields of publicly usable structs are public,
-  including their supporting handle and storage types. Applications can inspect,
-  construct, and integrate these values directly instead of being forced through
-  hidden framework state. (If you want to hack, go hack it.)
-- **Native-only for now:** RayQuad currently targets desktop and mobile platforms.
-
-- **Repository cleanup and reorganization:** source files are grouped by subsystem,
-  module entry points use `mod.rs`, and embedded library assets are stored under
-  `assets/`.
-- **Faster hash collections:** production uses of
-  `std::collections::HashMap` and `HashSet` have been replaced with Foldhash.
-- **Shapeless fast font pipeline:** text rendering skips runtime shaping entirely
-  (no HarfBuzz, no Parley, no per-string shaping allocations). In development,
-  fonts can be rasterized on the fly from TTF via the `font-rasterize` feature
-  (backed by Swash). In production, pre-baked `.bin` metrics and `.png` atlases
-  can be loaded with zero font dependencies.
-- **Ordered input handling:** keyboard state uses compact bitsets for membership
-  checks together with `Vec` storage to preserve input-event order.
-- **Direct PNG decoding:** image and texture loaders use the `png` crate directly
-  and decode into upload-ready RGBA pixels. RayQuad supports PNG as its encoded
-  image format and avoids the generic `image` crate, `DynamicImage`,
-- **Streamlined audio subsystem:** vendored and modernized `quad-snd` directly
-  into RayQuad, removing `audrey`, `dasp`, `hound`, and `lewton` crate dependencies.
-  WAV files decode via a lightweight, in-memory reader (~14–22× faster), Ogg Vorbis
-  decodes via embedded `stb_vorbis` (~2–3× faster), mono-to-stereo expansion and
-  linear resampling run in a single integer-precision pass, and loading returns
-  structured `Result` errors without panics.
-- Replaced the handwritten coroutine and texture generational stores with typed
-  generational keys.
-- Replaced the `color_u8!` macro with a typed `const fn` named `color_u8`.
-- Updated coroutine memory telemetry to describe its SlotMap-based estimate.
+  and their runtime and telemetry hooks. RayQuad keeps the application frame loop
+  authoritative and explicit.
 - **Zero-allocation 2D shape rendering:** `draw_poly`, `draw_circle`, `draw_ellipse`,
   and `draw_arc` reuse thread-local scratch buffers (`SHAPES_SCRATCH`), eliminating
   all per-shape heap allocations (`Vec::with_capacity` churn) during the frame loop.
@@ -76,10 +55,31 @@ The main intentional differences from upstream Macroquad are:
 - **Unrotated sprite fast-path:** `draw_texture_ex` bypasses pivot and trigonometric
   math (`sin`, `cos`) when `rotation == 0.0`, accelerating typical 2D tile and
   sprite quad generation.
-- **Block-level text batching:** `TextRenderer` aggregates all character glyph
-  quads across a text string into internal scratch buffers and dispatches a single
-  batch draw call to `QuadGl` per text block instead of one draw call per glyph,
-  with an unrotated fast-path for layout coordinates.
+- **Direct PNG decoding:** image and texture loaders use the `png` crate directly
+  and decode into upload-ready RGBA pixels, eliminating the generic `image` crate and
+  `DynamicImage` abstractions.
+- **Streamlined audio subsystem:** vendored and modernized `quad-snd` directly
+  into RayQuad, removing `audrey`, `dasp`, `hound`, and `lewton` crate dependencies.
+  WAV files decode via a lightweight, in-memory reader (~14–22× faster), Ogg Vorbis
+  decodes via embedded `stb_vorbis` (~2–3× faster), and mono-to-stereo expansion and
+  linear resampling run in a single integer-precision pass.
+- **Vendored and modernized random module:** vendored `quad-rand` directly into
+  RayQuad. Replaced float-based integer range conversions with fast bounded
+  Lemire integer multiplication, added full 64-bit entropy sampling,
+  modernized slice Fisher-Yates shuffling to zero-allocation in-place swaps, and added
+  lock-free atomic CAS state updates.
+- **Upgraded linear algebra to `glam 0.34` with native hardware SIMD:** upgraded
+  from `glam 0.27` to `0.34` and dropped the legacy `scalar-math` restriction, enabling
+  hardware-accelerated SSE2 on x86_64 and NEON on 64-bit ARM. Internal matrices use
+  modern `glam::camera::rh` conventions, while re-exporting the full modernized `glam`
+  API in `rayquad::math` and the prelude.
+- **Faster hash collections:** production uses of `std::collections::HashMap` and
+  `HashSet` have been replaced with Foldhash.
+- **Inspectable public data:** fields of publicly usable structs are public,
+  including their supporting handle and storage types.
+- **Native-only for now:** RayQuad currently targets desktop and mobile platforms.
+
+
 
 
 ## Text & Font Pipeline

@@ -60,7 +60,7 @@ pub(crate) struct CoroutinesContext {
 impl CoroutinesContext {
     pub fn new() -> CoroutinesContext {
         CoroutinesContext {
-            coroutines: SlotMap::with_capacity_and_key(1000),
+            coroutines: SlotMap::with_capacity_and_key(50),
             active_coroutine_now: None,
             active_coroutine_delta: None,
         }

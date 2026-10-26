@@ -255,15 +255,15 @@ impl Camera for Camera3D {
 
         match self.projection {
             Projection::Perspective => {
-                Mat4::perspective_rh_gl(self.fovy, aspect, self.z_near, self.z_far)
-                    * Mat4::look_at_rh(self.position, self.target, self.up)
+                glam::camera::rh::proj::opengl::perspective(self.fovy, aspect, self.z_near, self.z_far)
+                    * glam::camera::rh::view::look_at_mat4(self.position, self.target, self.up)
             }
             Projection::Orthographics => {
                 let top = self.fovy / 2.0;
                 let right = top * aspect;
 
-                Mat4::orthographic_rh_gl(-right, right, -top, top, self.z_near, self.z_far)
-                    * Mat4::look_at_rh(self.position, self.target, self.up)
+                glam::camera::rh::proj::opengl::orthographic(-right, right, -top, top, self.z_near, self.z_far)
+                    * glam::camera::rh::view::look_at_mat4(self.position, self.target, self.up)
             }
         }
     }

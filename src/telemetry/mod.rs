@@ -285,8 +285,8 @@ pub struct GpuQuery {
 
 /// ```skip
 /// {
-///    let _t = telemetry::LogTimeGuard::new("Atlas build time");
-///     mq::texture::build_textures_atlas();
+///    let _t = telemetry::LogTimeGuard::new("Load assets time");
+///    load_assets();
 /// }
 /// ```
 /// Will add "Time query: Atlas build time, 0.5s" string to

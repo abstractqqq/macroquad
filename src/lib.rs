@@ -132,9 +132,8 @@ pub use error::Error;
 /// ```
 
 /// Cross platform random generator.
-pub mod rand {
-    pub use quad_rand::*;
-}
+pub mod rand;
+pub use rand as quad_rand;
 
 #[cfg(not(feature = "log-rs"))]
 /// Logging macros, available with miniquad "log-impl" feature.
@@ -196,8 +195,6 @@ struct Context {
 
     cursor_grabbed: bool,
 
-    input_events: Vec<Vec<MiniquadInputEvent>>,
-
     gl: QuadGl,
     camera_matrix: Option<Mat4>,
 
@@ -215,7 +212,6 @@ struct Context {
     counter: usize,
 
     camera_stack: Vec<camera::CameraState>,
-    texture_batcher: texture::Batcher,
     unwind: bool,
     recovery_future: Option<Pin<Box<dyn Future<Output = ()>>>>,
 
@@ -227,76 +223,6 @@ struct Context {
     update_on: conf::UpdateTrigger,
 
     dropped_files: Vec<DroppedFile>,
-}
-
-#[derive(Clone)]
-enum MiniquadInputEvent {
-    MouseMotion {
-        x: f32,
-        y: f32,
-    },
-    MouseWheel {
-        x: f32,
-        y: f32,
-    },
-    MouseButtonDown {
-        x: f32,
-        y: f32,
-        btn: MouseButton,
-    },
-    MouseButtonUp {
-        x: f32,
-        y: f32,
-        btn: MouseButton,
-    },
-    Char {
-        character: char,
-        modifiers: KeyMods,
-        repeat: bool,
-    },
-    KeyDown {
-        keycode: KeyCode,
-        modifiers: KeyMods,
-        repeat: bool,
-    },
-    KeyUp {
-        keycode: KeyCode,
-        modifiers: KeyMods,
-    },
-    Touch {
-        phase: TouchPhase,
-        id: u64,
-        x: f32,
-        y: f32,
-    },
-    WindowMinimized,
-    WindowRestored,
-}
-
-impl MiniquadInputEvent {
-    fn repeat<T: miniquad::EventHandler>(&self, t: &mut T) {
-        use crate::MiniquadInputEvent::*;
-        match self {
-            MouseMotion { x, y } => t.mouse_motion_event(*x, *y),
-            MouseWheel { x, y } => t.mouse_wheel_event(*x, *y),
-            MouseButtonDown { x, y, btn } => t.mouse_button_down_event(*btn, *x, *y),
-            MouseButtonUp { x, y, btn } => t.mouse_button_up_event(*btn, *x, *y),
-            Char {
-                character,
-                modifiers,
-                repeat,
-            } => t.char_event(*character, *modifiers, *repeat),
-            KeyDown {
-                keycode,
-                modifiers,
-                repeat,
-            } => t.key_down_event(*keycode, *modifiers, *repeat),
-            KeyUp { keycode, modifiers } => t.key_up_event(*keycode, *modifiers),
-            Touch { phase, id, x, y } => t.touch_event(*phase, *id, *x, *y),
-            WindowMinimized => t.window_minimized_event(),
-            WindowRestored => t.window_restored_event(),
-        }
-    }
 }
 
 impl Context {
@@ -335,8 +261,6 @@ impl Context {
 
             cursor_grabbed: false,
 
-            input_events: Vec::new(),
-
             camera_matrix: None,
             gl: QuadGl::new(
                 &mut *ctx,
@@ -346,7 +270,6 @@ impl Context {
 
             fonts_storage,
             text_renderer,
-            texture_batcher: texture::Batcher::new(&mut *ctx),
             camera_stack: vec![],
 
             audio_context: audio::AudioContext::new(),
@@ -451,7 +374,7 @@ impl Context {
 
         let dpi = miniquad::window::dpi_scale();
 
-        glam::Mat4::orthographic_rh_gl(0., width / dpi, height / dpi, 0., -1., 1.)
+        glam::camera::rh::proj::opengl::orthographic(0., width / dpi, height / dpi, 0., -1., 1.)
     }
 
     pub(crate) fn projection_matrix(&self) -> glam::Mat4 {
@@ -508,15 +431,6 @@ impl EventHandler for Stage {
 
         if context.cursor_grabbed {
             context.mouse_position += Vec2::new(x, y);
-
-            let event = MiniquadInputEvent::MouseMotion {
-                x: context.mouse_position.x,
-                y: context.mouse_position.y,
-            };
-            context
-                .input_events
-                .iter_mut()
-                .for_each(|arr| arr.push(event.clone()));
         }
     }
 
@@ -525,11 +439,6 @@ impl EventHandler for Stage {
 
         if !context.cursor_grabbed {
             context.mouse_position = Vec2::new(x, y);
-
-            context
-                .input_events
-                .iter_mut()
-                .for_each(|arr| arr.push(MiniquadInputEvent::MouseMotion { x, y }));
         }
 
         if context.update_on.mouse_motion {
@@ -543,11 +452,6 @@ impl EventHandler for Stage {
         context.mouse_wheel.x = x;
         context.mouse_wheel.y = y;
 
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::MouseWheel { x, y }));
-
         if context.update_on.mouse_wheel {
             miniquad::window::schedule_update();
         }
@@ -557,11 +461,6 @@ impl EventHandler for Stage {
         let context = get_context();
 
         context.mouse_buttons.press(btn);
-
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::MouseButtonDown { x, y, btn }));
 
         if !context.cursor_grabbed {
             context.mouse_position = Vec2::new(x, y);
@@ -576,11 +475,6 @@ impl EventHandler for Stage {
         let context = get_context();
         //     println!("btn = {}", btn as u32);
         context.mouse_buttons.release(btn);
-
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::MouseButtonUp { x, y, btn }));
 
         if !context.cursor_grabbed {
             context.mouse_position = Vec2::new(x, y);
@@ -602,10 +496,6 @@ impl EventHandler for Stage {
             context.mouse_position = Vec2::new(x, y);
         }
 
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::MouseButtonUp { x, y, btn }));
         if btn != MouseButton::Unknown {
             context.mouse_buttons.press(btn);
         }
@@ -643,40 +533,21 @@ impl EventHandler for Stage {
             miniquad::window::schedule_update();
         };
 
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::Touch { phase, id, x, y }));
-
         if context.update_on.mouse_down {
             miniquad::window::schedule_update();
         }
     }
 
-    fn char_event(&mut self, character: char, modifiers: KeyMods, repeat: bool) {
+    fn char_event(&mut self, character: char, _modifiers: KeyMods, _repeat: bool) {
         let context = get_context();
 
         context.chars_pressed_queue.push_back(character);
-        context.input_events.iter_mut().for_each(|arr| {
-            arr.push(MiniquadInputEvent::Char {
-                character,
-                modifiers,
-                repeat,
-            });
-        });
     }
 
-    fn key_down_event(&mut self, keycode: KeyCode, modifiers: KeyMods, repeat: bool) {
+    fn key_down_event(&mut self, keycode: KeyCode, _modifiers: KeyMods, repeat: bool) {
         let context = get_context();
         context.keyboard.press(keycode, repeat);
 
-        context.input_events.iter_mut().for_each(|arr| {
-            arr.push(MiniquadInputEvent::KeyDown {
-                keycode,
-                modifiers,
-                repeat,
-            });
-        });
         if context
             .update_on
             .specific_key
@@ -687,14 +558,9 @@ impl EventHandler for Stage {
         }
     }
 
-    fn key_up_event(&mut self, keycode: KeyCode, modifiers: KeyMods) {
+    fn key_up_event(&mut self, keycode: KeyCode, _modifiers: KeyMods) {
         let context = get_context();
         context.keyboard.release(keycode);
-
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::KeyUp { keycode, modifiers }));
 
         if miniquad::window::blocking_event_loop() {
             //miniquad::window::schedule_update();
@@ -798,11 +664,6 @@ impl EventHandler for Stage {
         if miniquad::window::blocking_event_loop() {
             miniquad::window::schedule_update();
         }
-
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::WindowRestored));
     }
 
     fn window_minimized_event(&mut self) {
@@ -819,11 +680,6 @@ impl EventHandler for Stage {
         for (_, touch) in context.touches.iter_mut() {
             touch.phase = input::TouchPhase::Ended;
         }
-
-        context
-            .input_events
-            .iter_mut()
-            .for_each(|arr| arr.push(MiniquadInputEvent::WindowMinimized));
     }
 
     fn quit_requested_event(&mut self) {

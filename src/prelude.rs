@@ -18,7 +18,7 @@ pub use glam;
 pub use miniquad::{
     conf::Conf, Comparison, PipelineParams, ShaderError, ShaderSource, UniformDesc, UniformType,
 };
-pub use quad_rand as rand;
+pub use crate::rand;
 
 pub use crate::experimental::*;
 

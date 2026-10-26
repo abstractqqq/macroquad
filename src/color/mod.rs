@@ -128,7 +128,8 @@ impl Color {
 
     /// Create a color from a vec4 of red, green, blue, and alpha components.
     pub const fn from_vec(vec: glam::Vec4) -> Self {
-        Self::new(vec.x, vec.y, vec.z, vec.w)
+        let [r, g, b, a] = vec.to_array();
+        Self::new(r, g, b, a)
     }
 
     /// Create a copy of the current color, but with a different alpha value.

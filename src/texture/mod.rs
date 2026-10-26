@@ -2,8 +2,6 @@
 
 use crate::{color::Color, file::load_file, get_context, get_quad_context, math::Rect, Error};
 
-pub(crate) mod atlas;
-
 pub use crate::quad_gl::FilterMode;
 use crate::quad_gl::{DrawMode, Vertex};
 use crate::slotmap::{DefaultKey as TextureSlotId, SlotMap};
@@ -65,7 +63,7 @@ impl TexturesContext {
     pub fn new() -> TexturesContext {
         TexturesContext {
             textures: SlotMap::with_key(),
-            removed: Vec::with_capacity(200),
+            removed: Vec::with_capacity(100),
             removed_render_passes: Vec::with_capacity(10),
         }
     }
@@ -533,7 +531,7 @@ pub fn draw_texture_ex(
 ) {
     let context = get_context();
 
-    let [mut width, mut height] = texture.size().to_array();
+    let [width, height] = texture.size().to_array();
 
     let Rect {
         x: mut sx,
@@ -546,23 +544,6 @@ pub fn draw_texture_ex(
         w: width,
         h: height,
     });
-
-    let texture_opt = context
-        .texture_batcher
-        .get(texture)
-        .map(|(batched_texture, uv)| {
-            let [batched_width, batched_height] = batched_texture.size().to_array();
-            sx = ((sx / width) * uv.w + uv.x) * batched_width;
-            sy = ((sy / height) * uv.h + uv.y) * batched_height;
-            sw = (sw / width) * uv.w * batched_width;
-            sh = (sh / height) * uv.h * batched_height;
-
-            width = batched_width;
-            height = batched_height;
-
-            batched_texture
-        });
-    let texture = texture_opt.as_ref().unwrap_or(texture);
 
     let (mut w, mut h) = match params.dest_size {
         Some(dst) => (dst.x, dst.y),
@@ -739,8 +720,6 @@ impl Texture2D {
         let texture = Texture2D { texture };
         texture.set_filter(ctx.default_filter_mode);
 
-        ctx.texture_batcher.add_unbatched(&texture);
-
         texture
     }
 
@@ -890,62 +869,8 @@ impl Texture2D {
     }
 }
 
-pub(crate) struct Batcher {
-    unbatched: Vec<Texture2D>,
-    atlas: atlas::Atlas,
-}
-
-impl Batcher {
-    pub fn new(ctx: &mut dyn miniquad::RenderingBackend) -> Batcher {
-        Batcher {
-            unbatched: vec![],
-            atlas: atlas::Atlas::new(ctx, miniquad::FilterMode::Linear),
-        }
-    }
-
-    pub fn add_unbatched(&mut self, texture: &Texture2D) {
-        self.unbatched.push(texture.weak_clone());
-    }
-
-    pub fn get(&mut self, texture: &Texture2D) -> Option<(Texture2D, Rect)> {
-        let id = texture.raw_miniquad_id();
-        let uv_rect = self.atlas.get_uv_rect(id)?;
-        Some((Texture2D::unmanaged(self.atlas.texture()), uv_rect))
-    }
-}
-
-/// Build an atlas out of all currently loaded texture
-/// Later on all draw_texture calls with texture available in the atlas will use
-/// the one from the atlas
-/// NOTE: the GPU memory and texture itself in Texture2D will still be allocated
-/// and Texture->Image conversions will work with Texture2D content, not the atlas
-pub fn build_textures_atlas() {
-    let context = get_context();
-
-    for texture in context.texture_batcher.unbatched.drain(0..) {
-        let sprite: Image = texture.get_texture_data();
-        let id = texture.raw_miniquad_id();
-
-        context.texture_batcher.atlas.cache_sprite(id, sprite);
-    }
-
-    let texture = context.texture_batcher.atlas.texture();
-    let (w, h) = get_quad_context().texture_size(texture);
-    crate::telemetry::log_string(&format!("Atlas: {w} {h}"));
-}
-
-#[doc(hidden)]
-/// Resets the general-purpose texture batching atlas.
-///
-/// Immutable font atlases are independent and remain valid.
-pub unsafe fn reset_textures_atlas() {
-    let context = get_context();
-    context.texture_batcher = Batcher::new(&mut *context.quad_context);
-}
-
 pub fn set_default_filter_mode(filter: FilterMode) {
     let context = get_context();
 
     context.default_filter_mode = filter;
-    context.texture_batcher.atlas.set_filter(filter);
 }

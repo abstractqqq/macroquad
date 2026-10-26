@@ -565,7 +565,6 @@ pub struct QuadGl {
     pub draw_calls_bindings: Vec<Bindings>,
     pub draw_calls_count: usize,
     pub state: GlState,
-    pub start_time: f64,
 
     pub white_texture: miniquad::TextureId,
     pub max_vertices: usize,
@@ -602,7 +601,6 @@ impl QuadGl {
             draw_calls: Vec::with_capacity(200),
             draw_calls_bindings: Vec::with_capacity(200),
             draw_calls_count: 0,
-            start_time: miniquad::date::now(),
 
             white_texture,
             batch_vertex_buffer: Vec::with_capacity(max_vertices),
@@ -710,7 +708,7 @@ impl QuadGl {
         assert_eq!(self.draw_calls_bindings.len(), self.draw_calls.len());
 
         let (screen_width, screen_height) = miniquad::window::screen_size();
-        let time = (miniquad::date::now() - self.start_time) as f32;
+        let time = crate::time::get_time() as f32;
         let time = glam::vec4(time, time.sin(), time.cos(), 0.);
 
         for (dc, bindings) in self.draw_calls[0..self.draw_calls_count]
