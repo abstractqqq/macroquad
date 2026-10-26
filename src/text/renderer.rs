@@ -13,7 +13,7 @@ pub(crate) const BASE_FONT_SIZE: f32 = 32.0;
 
 #[derive(Debug, Clone, Copy)]
 pub struct PositionedGlyph {
-    pub rect: Option<Rect>,
+    pub rect: Rect,
     pub left: i32,
     pub top: i32,
     pub x: f32,
@@ -22,8 +22,8 @@ pub struct PositionedGlyph {
 
 #[derive(Debug, Clone)]
 pub struct ShapedCluster {
-    pub source: Range<usize>,
-    pub glyphs: Range<usize>,
+    pub source: Range<u32>,
+    pub glyphs: Range<u32>,
 }
 
 pub struct ShapedText {
@@ -60,9 +60,12 @@ impl TextRenderer {
             });
         }
 
+        let character_count = text.chars().count();
+        u32::try_from(text.len()).expect("Text exceeds 4 GiB");
         let line_height = font.data.ascent + font.data.descent + font.data.line_gap;
-        let mut glyphs = Vec::new();
-        let mut clusters = Vec::new();
+        let fallback = font.data.get_glyph('?');
+        let mut glyphs = Vec::with_capacity(character_count);
+        let mut clusters = Vec::with_capacity(character_count);
         let mut width = 0.0_f32;
         let mut line_count = 0usize;
         let mut source_offset = 0usize;
@@ -74,18 +77,17 @@ impl TextRenderer {
             let mut baseline_y = (line_count - 1) as f32 * line_height;
 
             for (char_byte_offset, ch) in line.char_indices() {
-                let Some(metric) = font.data.get_glyph(ch).or_else(|| font.data.get_glyph('?')) else {
+                let Some(metric) = font.data.get_glyph(ch).or(fallback) else {
                     clusters.push(ShapedCluster {
-                        source: source_offset + char_byte_offset
-                            ..source_offset + char_byte_offset + ch.len_utf8(),
-                        glyphs: glyphs.len()..glyphs.len(),
+                        source: (source_offset + char_byte_offset) as u32
+                            ..(source_offset + char_byte_offset + ch.len_utf8()) as u32,
+                        glyphs: glyphs.len() as u32..glyphs.len() as u32,
                     });
                     continue;
                 };
 
                 let advance = metric.advance;
-                let wrapped =
-                    max_width.is_some_and(|max_w| pen_x > 0.0 && pen_x + advance > max_w);
+                let wrapped = max_width.is_some_and(|max_w| pen_x > 0.0 && pen_x + advance > max_w);
                 if wrapped {
                     width = width.max(pen_x);
                     pen_x = 0.0;
@@ -96,16 +98,16 @@ impl TextRenderer {
                 let glyph_start = glyphs.len();
                 if wrapped && ch.is_whitespace() {
                     clusters.push(ShapedCluster {
-                        source: source_offset + char_byte_offset
-                            ..source_offset + char_byte_offset + ch.len_utf8(),
-                        glyphs: glyph_start..glyph_start,
+                        source: (source_offset + char_byte_offset) as u32
+                            ..(source_offset + char_byte_offset + ch.len_utf8()) as u32,
+                        glyphs: glyph_start as u32..glyph_start as u32,
                     });
                     continue;
                 }
 
                 if let Some(rect) = metric.rect {
                     glyphs.push(PositionedGlyph {
-                        rect: Some(rect),
+                        rect,
                         left: metric.left,
                         top: metric.top,
                         x: pen_x,
@@ -115,9 +117,9 @@ impl TextRenderer {
                 pen_x += advance;
 
                 clusters.push(ShapedCluster {
-                    source: source_offset + char_byte_offset
-                        ..source_offset + char_byte_offset + ch.len_utf8(),
-                    glyphs: glyph_start..glyphs.len(),
+                    source: (source_offset + char_byte_offset) as u32
+                        ..(source_offset + char_byte_offset + ch.len_utf8()) as u32,
+                    glyphs: glyph_start as u32..glyphs.len() as u32,
                 });
             }
 
@@ -125,8 +127,8 @@ impl TextRenderer {
             source_offset += line.len();
             if line_index + 1 < explicit_line_count {
                 clusters.push(ShapedCluster {
-                    source: source_offset..source_offset + 1,
-                    glyphs: glyphs.len()..glyphs.len(),
+                    source: source_offset as u32..source_offset as u32 + 1,
+                    glyphs: glyphs.len() as u32..glyphs.len() as u32,
                 });
                 source_offset += 1;
             }
@@ -155,6 +157,7 @@ impl TextRenderer {
             return TextDimensions::default();
         }
         let line_height = font.data.ascent + font.data.descent + font.data.line_gap;
+        let fallback = font.data.get_glyph('?');
         let mut width = 0.0_f32;
         let mut line_count = 0usize;
 
@@ -162,7 +165,7 @@ impl TextRenderer {
             line_count += 1;
             let mut pen_x = 0.0;
             for ch in line.chars() {
-                if let Some(metric) = font.data.get_glyph(ch).or_else(|| font.data.get_glyph('?')) {
+                if let Some(metric) = font.data.get_glyph(ch).or(fallback) {
                     pen_x += metric.advance;
                 }
             }
@@ -202,11 +205,12 @@ impl TextRenderer {
         let base_scale = requested_pixel_size / font.data.base_size;
         let layout_scale_x = base_scale * scale_x;
         let layout_scale_y = base_scale * scale_y;
-        let cos = rotation.cos();
-        let sin = rotation.sin();
-        let indices = [0, 1, 2, 0, 2, 3];
+        let rotation = (rotation != 0.0).then(|| rotation.sin_cos());
+        let inv_atlas_width = 1.0 / atlas_width;
+        let inv_atlas_height = 1.0 / atlas_height;
 
         let line_height = font.data.ascent + font.data.descent + font.data.line_gap;
+        let fallback = font.data.get_glyph('?');
         let mut width = 0.0_f32;
         let mut line_count = 0usize;
 
@@ -222,7 +226,7 @@ impl TextRenderer {
             let baseline_y = (line_count - 1) as f32 * line_height;
 
             for ch in line.chars() {
-                let Some(metric) = font.data.get_glyph(ch).or_else(|| font.data.get_glyph('?')) else {
+                let Some(metric) = font.data.get_glyph(ch).or(fallback) else {
                     continue;
                 };
 
@@ -230,36 +234,36 @@ impl TextRenderer {
                     let logical_x = pen_x * layout_scale_x + metric.left as f32 * layout_scale_x;
                     let logical_y =
                         baseline_y * layout_scale_y - metric.top as f32 * layout_scale_y;
-                    let (dest_x, dest_y) = if rotation == 0.0 {
-                        (x + logical_x, y + logical_y)
-                    } else {
+                    let (dest_x, dest_y) = if let Some((sin, cos)) = rotation {
                         (
                             x + logical_x * cos - logical_y * sin,
                             y + logical_x * sin + logical_y * cos,
                         )
+                    } else {
+                        (x + logical_x, y + logical_y)
                     };
                     let w = rect.w * layout_scale_x;
                     let h = rect.h * layout_scale_y;
 
-                    let p = if rotation == 0.0 {
-                        [
-                            vec2(dest_x, dest_y),
-                            vec2(dest_x + w, dest_y),
-                            vec2(dest_x + w, dest_y + h),
-                            vec2(dest_x, dest_y + h),
-                        ]
-                    } else {
+                    let p = if let Some((sin, cos)) = rotation {
                         [
                             vec2(dest_x, dest_y),
                             vec2(dest_x + w * cos, dest_y + w * sin),
                             vec2(dest_x + w * cos - h * sin, dest_y + w * sin + h * cos),
                             vec2(dest_x - h * sin, dest_y + h * cos),
                         ]
+                    } else {
+                        [
+                            vec2(dest_x, dest_y),
+                            vec2(dest_x + w, dest_y),
+                            vec2(dest_x + w, dest_y + h),
+                            vec2(dest_x, dest_y + h),
+                        ]
                     };
-                    let sx = rect.x / atlas_width;
-                    let sy = rect.y / atlas_height;
-                    let sw = rect.w / atlas_width;
-                    let sh = rect.h / atlas_height;
+                    let sx = rect.x * inv_atlas_width;
+                    let sy = rect.y * inv_atlas_height;
+                    let sw = rect.w * inv_atlas_width;
+                    let sh = rect.h * inv_atlas_height;
 
                     let base_idx = self.batch_vertices.len() as u16;
                     self.batch_vertices.extend([
@@ -319,9 +323,9 @@ impl TextRenderer {
         let base_scale = requested_pixel_size / font.data.base_size;
         let layout_scale_x = base_scale * scale_x;
         let layout_scale_y = base_scale * scale_y;
-        let cos = rotation.cos();
-        let sin = rotation.sin();
-        let indices = [0, 1, 2, 0, 2, 3];
+        let rotation = (rotation != 0.0).then(|| rotation.sin_cos());
+        let inv_atlas_width = 1.0 / atlas_width;
+        let inv_atlas_height = 1.0 / atlas_height;
 
         gl.texture(Some(&texture));
         gl.draw_mode(DrawMode::Triangles);
@@ -335,30 +339,22 @@ impl TextRenderer {
                 .copied()
                 .flatten()
                 .unwrap_or(color);
-            for glyph in &shaped.glyphs[cluster.glyphs.clone()] {
-                let Some(rect) = glyph.rect else {
-                    continue;
-                };
+            let glyph_range = cluster.glyphs.start as usize..cluster.glyphs.end as usize;
+            for glyph in &shaped.glyphs[glyph_range] {
+                let rect = glyph.rect;
                 let logical_x = glyph.x * layout_scale_x + glyph.left as f32 * layout_scale_x;
                 let logical_y = glyph.y * layout_scale_y - glyph.top as f32 * layout_scale_y;
-                let (dest_x, dest_y) = if rotation == 0.0 {
-                    (x + logical_x, y + logical_y)
-                } else {
+                let (dest_x, dest_y) = if let Some((sin, cos)) = rotation {
                     (
                         x + logical_x * cos - logical_y * sin,
                         y + logical_x * sin + logical_y * cos,
                     )
+                } else {
+                    (x + logical_x, y + logical_y)
                 };
                 let width = rect.w * layout_scale_x;
                 let height = rect.h * layout_scale_y;
-                let p = if rotation == 0.0 {
-                    [
-                        vec2(dest_x, dest_y),
-                        vec2(dest_x + width, dest_y),
-                        vec2(dest_x + width, dest_y + height),
-                        vec2(dest_x, dest_y + height),
-                    ]
-                } else {
+                let p = if let Some((sin, cos)) = rotation {
                     [
                         vec2(dest_x, dest_y),
                         vec2(dest_x + width * cos, dest_y + width * sin),
@@ -368,11 +364,18 @@ impl TextRenderer {
                         ),
                         vec2(dest_x - height * sin, dest_y + height * cos),
                     ]
+                } else {
+                    [
+                        vec2(dest_x, dest_y),
+                        vec2(dest_x + width, dest_y),
+                        vec2(dest_x + width, dest_y + height),
+                        vec2(dest_x, dest_y + height),
+                    ]
                 };
-                let sx = rect.x / atlas_width;
-                let sy = rect.y / atlas_height;
-                let sw = rect.w / atlas_width;
-                let sh = rect.h / atlas_height;
+                let sx = rect.x * inv_atlas_width;
+                let sy = rect.y * inv_atlas_height;
+                let sw = rect.w * inv_atlas_width;
+                let sh = rect.h * inv_atlas_height;
 
                 let base_idx = self.batch_vertices.len() as u16;
                 self.batch_vertices.extend([

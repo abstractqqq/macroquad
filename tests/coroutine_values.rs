@@ -1,4 +1,4 @@
-use rayquad::{experimental::coroutines::start_coroutine, telemetry, window::next_frame};
+use rayquad::{experimental::coroutines::start_coroutine, window::next_frame};
 
 #[test]
 #[ignore = "requires a native display"]
@@ -31,10 +31,11 @@ fn coroutine_memory() {
 async fn coroutine_memory_async() {
     use rayquad::prelude::*;
 
+    let mut coroutines = Vec::new();
     for _ in 0..20 {
-        start_coroutine(async move {
+        coroutines.push(start_coroutine(async move {
             next_frame().await;
-        });
+        }));
 
         next_frame().await;
     }
@@ -42,5 +43,5 @@ async fn coroutine_memory_async() {
     // wait for the last one to finish
     next_frame().await;
 
-    assert_eq!(telemetry::active_coroutines_count(), 0);
+    assert!(coroutines.iter().all(|coroutine| coroutine.is_done()));
 }

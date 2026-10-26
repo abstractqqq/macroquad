@@ -4,9 +4,9 @@ use miniquad::*;
 
 pub use miniquad::{FilterMode, TextureId as MiniquadTexture, UniformDesc};
 
-use crate::{color::Color, logging::warn, telemetry, texture::Texture2D, tobytes::ToBytes, Error};
+use crate::{color::Color, logging::warn, texture::Texture2D, tobytes::ToBytes, Error};
 
-use std::{collections::BTreeMap, ops::Range};
+use std::ops::Range;
 
 pub use crate::models::Vertex;
 
@@ -33,9 +33,8 @@ pub struct DrawCall {
 
     pub draw_mode: DrawMode,
     pub pipeline: GlPipeline,
-    pub uniforms: Option<Range<usize>>,
+    pub uniforms: Range<u32>,
     pub render_pass: Option<RenderPass>,
-    pub capture: bool,
 }
 
 impl DrawCall {
@@ -57,19 +56,22 @@ impl DrawCall {
             model,
             draw_mode,
             pipeline,
-            uniforms: None,
+            uniforms: 0..0,
             render_pass,
-            capture: false,
         }
     }
 }
 
 pub struct MagicSnapshotter {
-    pub pipeline: Pipeline,
-    pub bindings: Bindings,
-    pub pass: Option<RenderPass>,
-
+    camera: Option<Box<CameraSnapshotter>>,
+    default_texture: Option<miniquad::TextureId>,
     pub screen_texture: Option<miniquad::TextureId>,
+}
+
+struct CameraSnapshotter {
+    pipeline: Pipeline,
+    bindings: Bindings,
+    pass: Option<RenderPass>,
 }
 
 mod snapshotter_shader {
@@ -133,8 +135,8 @@ mod snapshotter_shader {
     }
 }
 
-impl MagicSnapshotter {
-    fn new(ctx: &mut dyn RenderingBackend) -> MagicSnapshotter {
+impl CameraSnapshotter {
+    fn new(ctx: &mut dyn RenderingBackend) -> CameraSnapshotter {
         let shader = ctx
             .new_shader(
                 match ctx.info().backend {
@@ -186,10 +188,19 @@ impl MagicSnapshotter {
             images: vec![ctx.new_texture_from_rgba8(1, 1, &[0, 0, 0, 0])],
         };
 
-        MagicSnapshotter {
+        CameraSnapshotter {
             pipeline,
             bindings,
             pass: None,
+        }
+    }
+}
+
+impl MagicSnapshotter {
+    const fn new() -> MagicSnapshotter {
+        MagicSnapshotter {
+            camera: None,
+            default_texture: None,
             screen_texture: None,
         }
     }
@@ -197,56 +208,68 @@ impl MagicSnapshotter {
     fn snapshot(&mut self, ctx: &mut dyn RenderingBackend, camera_render_pass: Option<RenderPass>) {
         if let Some(camera_render_pass) = camera_render_pass {
             let texture = ctx.render_pass_texture(camera_render_pass);
-            if self.pass.is_none() {
-                let miniquad::TextureParams {
-                    width,
-                    height,
-                    format,
-                    ..
-                } = ctx.texture_params(texture);
+            let camera = self
+                .camera
+                .get_or_insert_with(|| Box::new(CameraSnapshotter::new(ctx)));
+            let source_params = ctx.texture_params(texture);
+            let needs_new_pass = camera.pass.map_or(true, |pass| {
+                let target = ctx.render_pass_texture(pass);
+                let target_params = ctx.texture_params(target);
+                target_params.width != source_params.width
+                    || target_params.height != source_params.height
+                    || target_params.format != source_params.format
+            });
+            if needs_new_pass {
+                if let Some(pass) = camera.pass.take() {
+                    ctx.delete_render_pass(pass);
+                }
                 let color_img = ctx.new_render_texture(TextureParams {
-                    width,
-                    height,
-                    format,
+                    width: source_params.width,
+                    height: source_params.height,
+                    format: source_params.format,
                     ..Default::default()
                 });
 
-                self.pass = Some(ctx.new_render_pass(color_img, None));
-                self.screen_texture = Some(color_img);
+                camera.pass = Some(ctx.new_render_pass(color_img, None));
             }
+            self.screen_texture = Some(ctx.render_pass_texture(camera.pass.unwrap()));
 
-            if self.bindings.images.len() == 0 {
-                self.bindings.images.push(texture);
+            if camera.bindings.images.is_empty() {
+                camera.bindings.images.push(texture);
             } else {
-                self.bindings.images[0] = texture;
+                camera.bindings.images[0] = texture;
             }
             ctx.begin_pass(
-                Some(self.pass.unwrap()),
+                Some(camera.pass.unwrap()),
                 PassAction::clear_color(1.0, 0.0, 1.0, 1.),
             );
-            ctx.apply_pipeline(&self.pipeline);
-            ctx.apply_bindings(&self.bindings);
+            ctx.apply_pipeline(&camera.pipeline);
+            ctx.apply_bindings(&camera.bindings);
             ctx.draw(0, 6, 1);
             ctx.end_render_pass();
         } else {
             let (screen_width, screen_height) = miniquad::window::screen_size();
-            if self.screen_texture.is_none()
+            if self.default_texture.is_none()
                 || self
-                    .screen_texture
+                    .default_texture
                     .map(|t| {
                         let (w, h) = ctx.texture_size(t);
                         w != screen_width as _ || h != screen_height as _
                     })
                     .unwrap_or(false)
             {
-                self.screen_texture = Some(ctx.new_render_texture(TextureParams {
+                if let Some(texture) = self.default_texture.take() {
+                    ctx.delete_texture(texture);
+                }
+                self.default_texture = Some(ctx.new_render_texture(TextureParams {
                     width: screen_width as _,
                     height: screen_height as _,
                     ..Default::default()
                 }));
             }
 
-            let texture = self.screen_texture.unwrap();
+            let texture = self.default_texture.unwrap();
+            self.screen_texture = Some(texture);
             Texture2D::unmanaged(texture).grab_screen();
         }
     }
@@ -265,7 +288,6 @@ pub struct GlState {
     pub snapshotter: MagicSnapshotter,
 
     pub render_pass: Option<RenderPass>,
-    pub capture: bool,
 }
 
 impl GlState {
@@ -278,8 +300,14 @@ impl GlState {
 pub struct Uniform {
     pub name: Box<str>,
     pub uniform_type: UniformType,
-    pub byte_offset: usize,
-    pub byte_size: usize,
+    pub byte_offset: u32,
+    pub byte_size: u32,
+}
+
+#[derive(Clone)]
+pub struct PipelineTexture {
+    pub name: Box<str>,
+    pub texture: Option<MiniquadTexture>,
 }
 
 #[derive(Clone)]
@@ -287,9 +315,8 @@ pub struct PipelineExt {
     pub pipeline: miniquad::Pipeline,
     pub wants_screen_texture: bool,
     pub uniforms: Box<[Uniform]>,
-    pub uniforms_data: Vec<u8>,
-    pub textures: Box<[Box<str>]>,
-    pub textures_data: BTreeMap<String, MiniquadTexture>,
+    pub uniforms_data: Box<[u8]>,
+    pub textures: Box<[PipelineTexture]>,
 }
 
 impl PipelineExt {
@@ -306,7 +333,7 @@ impl PipelineExt {
         let uniform_meta = uniform_meta.unwrap();
         let uniform_format = uniform_meta.uniform_type;
         let uniform_byte_size = uniform_format.size();
-        let uniform_byte_offset = uniform_meta.byte_offset;
+        let uniform_byte_offset = uniform_meta.byte_offset as usize;
 
         if size_of::<T>() != uniform_byte_size {
             warn!(
@@ -317,7 +344,7 @@ impl PipelineExt {
             );
             return;
         }
-        if uniform_byte_size != uniform_meta.byte_size {
+        if uniform_byte_size != uniform_meta.byte_size as usize {
             warn!("set_uniform do not support uniform arrays");
             return;
         }
@@ -350,8 +377,8 @@ impl PipelineExt {
             return;
         }
         let uniform_meta = uniform_meta.unwrap();
-        let uniform_byte_size = uniform_meta.byte_size;
-        let uniform_byte_offset = uniform_meta.byte_offset;
+        let uniform_byte_size = uniform_meta.byte_size as usize;
+        let uniform_byte_offset = uniform_meta.byte_offset as usize;
 
         let data = uniform.to_bytes();
         if data.len() != uniform_byte_size {
@@ -370,8 +397,7 @@ impl PipelineExt {
 }
 
 pub struct PipelinesStorage {
-    pub pipelines: [Option<PipelineExt>; Self::MAX_PIPELINES],
-    pub pipelines_amount: usize,
+    pub pipelines: Vec<Option<PipelineExt>>,
 }
 
 impl PipelinesStorage {
@@ -407,8 +433,7 @@ impl PipelinesStorage {
         };
 
         let mut storage = PipelinesStorage {
-            pipelines: Default::default(),
-            pipelines_amount: 0,
+            pipelines: Vec::with_capacity(4),
         };
 
         let triangles_pipeline = storage.make_pipeline(
@@ -492,13 +517,19 @@ impl PipelinesStorage {
             params,
         );
 
-        let id = self
-            .pipelines
-            .iter()
-            .position(|p| p.is_none())
-            .unwrap_or_else(|| panic!("Pipelines amount exceeded"));
+        let id = match self.pipelines.iter().position(Option::is_none) {
+            Some(id) => id,
+            None => {
+                assert!(
+                    self.pipelines.len() < Self::MAX_PIPELINES,
+                    "Pipelines amount exceeded"
+                );
+                self.pipelines.push(None);
+                self.pipelines.len() - 1
+            }
+        };
 
-        let mut max_offset = 0;
+        let mut uniforms_data_len = 0;
 
         for (name, kind) in shader::uniforms().into_iter().rev() {
             uniforms.insert(0, UniformDesc::new(name, kind));
@@ -506,16 +537,23 @@ impl PipelinesStorage {
 
         let uniforms = uniforms
             .iter()
-            .scan(0, |offset, uniform| {
-                let byte_size = uniform.uniform_type.size() * uniform.array_count;
+            .scan(0u32, |offset, uniform| {
+                let byte_size = uniform
+                    .uniform_type
+                    .size()
+                    .checked_mul(uniform.array_count)
+                    .and_then(|size| u32::try_from(size).ok())
+                    .expect("Uniform size exceeds 4 GiB");
                 let uniform = Uniform {
                     name: uniform.name.clone().into_boxed_str(),
                     uniform_type: uniform.uniform_type,
                     byte_size,
                     byte_offset: *offset,
                 };
-                *offset += byte_size;
-                max_offset = *offset;
+                *offset = offset
+                    .checked_add(byte_size)
+                    .expect("Uniform block size exceeds 4 GiB");
+                uniforms_data_len = *offset as usize;
 
                 Some(uniform)
             })
@@ -523,7 +561,10 @@ impl PipelinesStorage {
             .into_boxed_slice();
         let textures = textures
             .into_iter()
-            .map(String::into_boxed_str)
+            .map(|name| PipelineTexture {
+                name: name.into_boxed_str(),
+                texture: None,
+            })
             .collect::<Vec<_>>()
             .into_boxed_slice();
 
@@ -531,12 +572,9 @@ impl PipelinesStorage {
             pipeline,
             wants_screen_texture,
             uniforms,
-            uniforms_data: vec![0; max_offset],
+            uniforms_data: vec![0; uniforms_data_len].into_boxed_slice(),
             textures,
-            textures_data: BTreeMap::new(),
         });
-        self.pipelines_amount += 1;
-
         GlPipeline(id)
     }
 
@@ -594,9 +632,8 @@ impl QuadGl {
                 pipeline: None,
                 break_batching: false,
                 depth_test_enable: false,
-                snapshotter: MagicSnapshotter::new(ctx),
+                snapshotter: MagicSnapshotter::new(),
                 render_pass: None,
-                capture: false,
             },
             draw_calls: Vec::with_capacity(200),
             draw_calls_bindings: Vec::with_capacity(200),
@@ -760,10 +797,8 @@ impl QuadGl {
                 .images
                 .resize(2 + pipeline.textures.len(), white_texture);
 
-            for (pos, name) in pipeline.textures.iter().enumerate() {
-                if let Some(texture) = pipeline.textures_data.get(name.as_ref()).copied() {
-                    bindings.images[2 + pos] = texture;
-                }
+            for (pos, texture) in pipeline.textures.iter().enumerate() {
+                bindings.images[2 + pos] = texture.texture.unwrap_or(white_texture);
             }
 
             ctx.apply_pipeline(&pipeline.pipeline);
@@ -779,10 +814,11 @@ impl QuadGl {
             }
             ctx.apply_bindings(bindings);
 
-            if let Some(uniforms) = &dc.uniforms {
+            if !dc.uniforms.is_empty() {
+                let uniforms = dc.uniforms.start as usize..dc.uniforms.end as usize;
                 pipeline
                     .uniforms_data
-                    .copy_from_slice(&self.batch_uniform_buffer[uniforms.clone()]);
+                    .copy_from_slice(&self.batch_uniform_buffer[uniforms]);
             }
             pipeline.set_uniform("Projection", projection);
             pipeline.set_uniform("Model", dc.model);
@@ -794,10 +830,6 @@ impl QuadGl {
             ctx.draw(0, dc.indices_count as i32, 1);
             ctx.end_render_pass();
 
-            if dc.capture {
-                telemetry::track_drawcall(&pipeline.pipeline, bindings, dc.indices_count);
-            }
-
             dc.vertices_count = 0;
             dc.indices_count = 0;
             dc.vertices_start = 0;
@@ -808,10 +840,6 @@ impl QuadGl {
         self.batch_index_buffer.clear();
         self.batch_vertex_buffer.clear();
         self.batch_uniform_buffer.clear();
-    }
-
-    pub(crate) fn capture(&mut self, capture: bool) {
-        self.state.capture = capture;
     }
 
     pub fn get_projection_matrix(&self) -> glam::Mat4 {
@@ -913,15 +941,16 @@ impl QuadGl {
                 || draw_call.draw_mode != self.state.draw_mode
                 || draw_call.vertices_count >= self.max_vertices - vertices.len()
                 || draw_call.indices_count >= self.max_indices - indices.len()
-                || draw_call.capture != self.state.capture
                 || self.state.break_batching
         }) {
-            let uniforms = self.state.pipeline.map(|pipeline| {
+            let uniforms = self.state.pipeline.map_or(0..0, |pipeline| {
                 let start = self.batch_uniform_buffer.len();
                 self.batch_uniform_buffer.extend_from_slice(
                     &self.pipelines.get_quad_pipeline_mut(pipeline).uniforms_data,
                 );
-                start..self.batch_uniform_buffer.len()
+                let end = self.batch_uniform_buffer.len();
+                u32::try_from(start).expect("Uniform batch exceeds 4 GiB")
+                    ..u32::try_from(end).expect("Uniform batch exceeds 4 GiB")
             });
 
             if self.draw_calls_count >= self.draw_calls.len() {
@@ -942,7 +971,6 @@ impl QuadGl {
             self.draw_calls[self.draw_calls_count].model = self.state.model();
             self.draw_calls[self.draw_calls_count].pipeline = pip;
             self.draw_calls[self.draw_calls_count].render_pass = self.state.render_pass;
-            self.draw_calls[self.draw_calls_count].capture = self.state.capture;
             self.draw_calls[self.draw_calls_count].indices_start = self.batch_index_buffer.len();
             self.draw_calls[self.draw_calls_count].vertices_start = self.batch_vertex_buffer.len();
 
@@ -987,21 +1015,22 @@ impl QuadGl {
 
     pub fn set_texture(&mut self, pipeline: GlPipeline, name: &str, texture: Texture2D) {
         let pipeline = self.pipelines.get_quad_pipeline_mut(pipeline);
-        pipeline
+        let texture_index = pipeline
             .textures
             .iter()
-            .find(|x| x.as_ref() == name)
+            .position(|texture| texture.name.as_ref() == name)
             .unwrap_or_else(|| {
+                let names: Vec<_> = pipeline
+                    .textures
+                    .iter()
+                    .map(|texture| texture.name.as_ref())
+                    .collect();
                 panic!(
                     "can't find texture with name '{}', there is only this names: {:?}",
-                    name, pipeline.textures
+                    name, names
                 )
             });
-        let quad_texture = texture.raw_miniquad_id();
-        *pipeline
-            .textures_data
-            .entry(name.to_owned())
-            .or_insert(quad_texture) = quad_texture;
+        pipeline.textures[texture_index].texture = Some(texture.raw_miniquad_id());
     }
 
     pub(crate) fn update_drawcall_capacity(

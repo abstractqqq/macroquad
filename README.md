@@ -39,7 +39,23 @@ The main intentional differences from upstream Macroquad are:
 - **Block-level text batching:** `TextRenderer` aggregates character glyph quads
   across a text string into internal scratch buffers and dispatches a single
   batch draw call to `QuadGl` per text block instead of one draw call per glyph,
-  with an unrotated fast-path for layout coordinates.
+  with an unrotated fast-path for layout coordinates. Glyph lookup caches the
+  fallback metric, UV generation uses precomputed atlas reciprocals, shaped-text
+  ranges use compact `u32` offsets, and `wrap_text` performs a linear pass instead
+  of repeatedly measuring the growing line.
+- **Compact pipeline and draw state:** pipeline texture names and bindings share a
+  single fixed slice, fixed-size uniform buffers use boxed slices, uniform metadata
+  uses checked `u32` offsets, and pipeline slots grow only as needed. Compact uniform
+  ranges reduce each 64-bit `DrawCall` from 208 to 192 bytes. Screen-copy shader and
+  quad resources are created lazily, and resized snapshot targets release obsolete
+  GPU resources.
+- **Safe frame-polled futures:** replaced Macroquad's hand-written unsafe
+  `RawWaker` with one reusable safe `Wake` implementation while preserving the
+  existing Miniquad-owned frame loop on desktop, mobile, and WASM. File loading
+  shares callback state safely and reuses valid UTF-8 byte allocations.
+- **Application-owned profiling:** removed the global telemetry/profiler module,
+  GPU timing queries, frame zones, draw-call capture textures, and profiling-only
+  render branches. Games can integrate a profiler appropriate to their own runtime.
 - **Explicit entry point:** applications call `Window::new` or `Window::from_config`
   directly; RayQuad has no companion procedural-macro crate.
 - **No built-in scene graph:** removed the experimental hierarchical scene system,

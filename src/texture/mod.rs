@@ -82,9 +82,6 @@ impl TexturesContext {
     // fn remove(&mut self, texture: TextureSlotId) {
     //     self.textures.remove(texture);
     // }
-    pub fn len(&self) -> usize {
-        self.textures.len()
-    }
     pub fn garbage_collect(&mut self, ctx: &mut miniquad::Context) {
         // Delete RenderPasses first, then textures (safer for attachments/FBOs)
         for pass in self.removed_render_passes.drain(0..) {

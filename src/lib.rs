@@ -71,8 +71,6 @@ pub mod experimental;
 
 pub mod prelude;
 
-pub mod telemetry;
-
 mod error;
 
 pub use color::color_u8;
@@ -317,8 +315,6 @@ impl Context {
     }
 
     fn begin_frame(&mut self) {
-        telemetry::begin_gpu_query("GPU");
-
         let color = Self::DEFAULT_BG_COLOR;
 
         get_quad_context().clear(Some((color.r, color.g, color.b, color.a)), None, None);
@@ -341,8 +337,6 @@ impl Context {
                 panic!("screenshot successfully saved to `screenshot.png`");
             }
         }
-
-        telemetry::end_gpu_query();
 
         self.mouse_wheel = Vec2::new(0., 0.);
         self.keyboard.clear_frame();
@@ -417,7 +411,6 @@ struct Stage {
 
 impl EventHandler for Stage {
     fn resize_event(&mut self, width: f32, height: f32) {
-        let _z = telemetry::ZoneGuard::new("Event::resize_event");
         get_context().screen_width = width;
         get_context().screen_height = height;
 
@@ -568,8 +561,6 @@ impl EventHandler for Stage {
     }
 
     fn update(&mut self) {
-        let _z = telemetry::ZoneGuard::new("Event::update");
-
         // Unless called every frame, cursor will not remain grabbed
         miniquad::window::set_cursor_grab(get_context().cursor_grabbed);
 
@@ -588,71 +579,40 @@ impl EventHandler for Stage {
     }
 
     fn draw(&mut self) {
-        {
-            let _z = telemetry::ZoneGuard::new("Event::draw");
+        use std::panic;
 
-            use std::panic;
+        get_context().begin_frame();
 
-            {
-                let _z = telemetry::ZoneGuard::new("Event::draw begin_frame");
-                get_context().begin_frame();
-            }
-
-            fn maybe_unwind(unwind: bool, f: impl FnOnce() + Sized + panic::UnwindSafe) -> bool {
-                if unwind {
-                    panic::catch_unwind(f).is_ok()
-                } else {
-                    f();
-                    true
-                }
-            }
-
-            let result = maybe_unwind(
-                get_context().unwind,
-                AssertUnwindSafe(|| {
-                    let _z = telemetry::ZoneGuard::new("Event::draw user code");
-
-                    if exec::resume(&mut self.main_future).is_some() {
-                        self.main_future = Box::pin(async move {});
-                        miniquad::window::quit();
-                        return;
-                    }
-                    get_context().coroutines_context.update();
-                }),
-            );
-
-            if result == false {
-                if let Some(recovery_future) = get_context().recovery_future.take() {
-                    self.main_future = recovery_future;
-                }
-            }
-
-            {
-                let _z = telemetry::ZoneGuard::new("Event::draw end_frame");
-                get_context().end_frame();
-            }
-            get_context().frame_time = date::now() - get_context().last_frame_time;
-            get_context().last_frame_time = date::now();
-
-            // glFinish waits until the drawing is done. See https://registry.khronos.org/OpenGL-Refpages/gl4/html/glFinish.xhtml.
-            // Some drivers do this by a busy loop which increases CPU usage to close to 100%.
-            // For discussion see https://github.com/not-fl3/rayquad/issues/275.
-            // If telemetry is enabled it kinda makes sense to call glFinish so that the telemetry
-            // timing is more representative of the time it took to draw. But for general use and
-            // in particular when double buffer is used it's not recommended to call glFinish,
-            // unless we use SyncObjects or we have to wait for other async operations to finish.
-            // See https://wikis.khronos.org/opengl/Common_Mistakes#glFinish_and_glFlush.
-            #[cfg(target_os = "linux")]
-            if telemetry::is_enabled() {
-                let _z = telemetry::ZoneGuard::new("glFinish/glFLush");
-                unsafe {
-                    miniquad::gl::glFlush();
-                    miniquad::gl::glFinish();
-                }
+        fn maybe_unwind(unwind: bool, f: impl FnOnce() + Sized + panic::UnwindSafe) -> bool {
+            if unwind {
+                panic::catch_unwind(f).is_ok()
+            } else {
+                f();
+                true
             }
         }
 
-        telemetry::reset();
+        let result = maybe_unwind(
+            get_context().unwind,
+            AssertUnwindSafe(|| {
+                if exec::resume(&mut self.main_future).is_some() {
+                    self.main_future = Box::pin(async move {});
+                    miniquad::window::quit();
+                    return;
+                }
+                get_context().coroutines_context.update();
+            }),
+        );
+
+        if result == false {
+            if let Some(recovery_future) = get_context().recovery_future.take() {
+                self.main_future = recovery_future;
+            }
+        }
+
+        get_context().end_frame();
+        get_context().frame_time = date::now() - get_context().last_frame_time;
+        get_context().last_frame_time = date::now();
     }
 
     fn window_restored_event(&mut self) {

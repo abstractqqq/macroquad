@@ -1,7 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
-use std::task::{Context, Poll, RawWaker, RawWakerVTable, Waker};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::task::{Context, Poll, Wake, Waker};
 
 use crate::Error;
 
@@ -35,7 +35,10 @@ impl Future for FileLoadingFuture {
     type Output = Result<Vec<u8>, Error>;
 
     fn poll(self: Pin<&mut Self>, _context: &mut Context) -> Poll<Self::Output> {
-        let mut contents = self.contents.lock().unwrap();
+        let mut contents = self
+            .contents
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         if let Some(contents) = contents.take() {
             Poll::Ready(contents)
         } else {
@@ -44,33 +47,68 @@ impl Future for FileLoadingFuture {
     }
 }
 
-fn waker() -> Waker {
-    unsafe fn clone(data: *const ()) -> RawWaker {
-        RawWaker::new(data, &VTABLE)
-    }
-    unsafe fn wake(_data: *const ()) {
+struct UnsupportedWaker;
+
+impl Wake for UnsupportedWaker {
+    fn wake(self: Arc<Self>) {
         panic!(
             "rayquad does not support waking futures, please use coroutines, \
             otherwise your pending future will block until the next frame"
         )
     }
-    unsafe fn wake_by_ref(data: *const ()) {
-        wake(data);
+
+    fn wake_by_ref(self: &Arc<Self>) {
+        panic!(
+            "rayquad does not support waking futures, please use coroutines, \
+            otherwise your pending future will block until the next frame"
+        )
     }
-    unsafe fn drop(_data: *const ()) {
-        // Nothing to do
-    }
-    const VTABLE: RawWakerVTable = RawWakerVTable::new(clone, wake, wake_by_ref, drop);
-    let raw_waker = RawWaker::new(std::ptr::null(), &VTABLE);
-    unsafe { Waker::from_raw(raw_waker) }
+}
+
+fn waker() -> &'static Waker {
+    static WAKER: OnceLock<Waker> = OnceLock::new();
+    WAKER.get_or_init(|| Waker::from(Arc::new(UnsupportedWaker)))
 }
 
 /// returns Some(T) if future is done, None if it would block
 pub(crate) fn resume<T>(future: &mut Pin<Box<dyn Future<Output = T>>>) -> Option<T> {
-    let waker = waker();
-    let mut futures_context = std::task::Context::from_waker(&waker);
+    let mut futures_context = std::task::Context::from_waker(waker());
     match future.as_mut().poll(&mut futures_context) {
         Poll::Ready(v) => Some(v),
         Poll::Pending => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_future_yields_exactly_once() {
+        let mut future: Pin<Box<dyn Future<Output = u8>>> = Box::pin(async {
+            FrameFuture::default().await;
+            42
+        });
+
+        assert_eq!(resume(&mut future), None);
+        assert_eq!(resume(&mut future), Some(42));
+    }
+
+    #[test]
+    #[should_panic(expected = "rayquad does not support waking futures")]
+    fn waking_remains_explicitly_unsupported() {
+        struct Wakes;
+
+        impl Future for Wakes {
+            type Output = ();
+
+            fn poll(self: Pin<&mut Self>, context: &mut Context<'_>) -> Poll<Self::Output> {
+                context.waker().wake_by_ref();
+                Poll::Pending
+            }
+        }
+
+        let mut future: Pin<Box<dyn Future<Output = ()>>> = Box::pin(Wakes);
+        resume(&mut future);
     }
 }

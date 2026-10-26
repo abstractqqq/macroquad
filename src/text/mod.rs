@@ -635,7 +635,7 @@ impl TextLayout {
         self.shaped
             .clusters
             .get(index)
-            .map(|cluster| cluster.source.clone())
+            .map(|cluster| cluster.source.start as usize..cluster.source.end as usize)
     }
 }
 
@@ -664,7 +664,8 @@ pub fn prepare_text_layout(
                 .iter()
                 .rev()
                 .find(|span| {
-                    span.range.start < cluster.source.end && cluster.source.start < span.range.end
+                    span.range.start < cluster.source.end as usize
+                        && (cluster.source.start as usize) < span.range.end
                 })
                 .map(|span| span.color)
         })
@@ -916,25 +917,38 @@ pub fn wrap_text(
     font_scale: f32,
     maximum_line_length: f32,
 ) -> String {
+    let context = get_context();
+    let font = font
+        .cloned()
+        .unwrap_or_else(|| context.fonts_storage.default_font.clone());
+    let fallback = font.data.get_glyph('?');
+    let scale = font_size as f32 / font.data.base_size * font_scale;
     let mut output = String::with_capacity(text.len());
     let mut line = String::new();
+    let mut line_width = 0.0;
+
     for character in text.chars() {
         if character == '\n' {
             output.push_str(&line);
             output.push('\n');
             line.clear();
+            line_width = 0.0;
             continue;
         }
-        line.push(character);
-        if measure_text(&line, font, font_size, font_scale).width > maximum_line_length {
-            line.pop();
-            if !line.is_empty() {
-                output.push_str(&line);
-                output.push('\n');
-                line.clear();
-            }
-            line.push(character);
+
+        let advance = font
+            .data
+            .get_glyph(character)
+            .or(fallback)
+            .map_or(0.0, |metric| metric.advance * scale);
+        if !line.is_empty() && line_width + advance > maximum_line_length {
+            output.push_str(&line);
+            output.push('\n');
+            line.clear();
+            line_width = 0.0;
         }
+        line.push(character);
+        line_width += advance;
     }
     output.push_str(&line);
     output

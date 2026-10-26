@@ -9,17 +9,18 @@ pub async fn load_file(path: &str) -> Result<Vec<u8>, Error> {
         use std::sync::{Arc, Mutex};
 
         let contents = Arc::new(Mutex::new(None));
-        let path = path.to_owned();
+        let path: Arc<str> = path.into();
 
         {
-            let contents = contents.clone();
-            let err_path = path.clone();
+            let contents = Arc::clone(&contents);
+            let err_path = Arc::clone(&path);
 
             miniquad::fs::load_file(&path, move |bytes| {
-                *contents.lock().unwrap() = Some(bytes.map_err(|kind| Error::FileError {
-                    kind,
-                    path: err_path.clone(),
-                }));
+                *contents.lock().unwrap_or_else(|error| error.into_inner()) =
+                    Some(bytes.map_err(|kind| Error::FileError {
+                        kind,
+                        path: err_path.to_string(),
+                    }));
             });
         }
 
@@ -27,7 +28,7 @@ pub async fn load_file(path: &str) -> Result<Vec<u8>, Error> {
     }
 
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
-    let _ = std::env::set_current_dir(std::env::current_exe().unwrap().parent().unwrap());
+    set_apple_working_directory();
 
     #[cfg(not(target_os = "android"))]
     let path = if let Some(ref pc_assets) = crate::get_context().pc_assets_folder {
@@ -39,13 +40,27 @@ pub async fn load_file(path: &str) -> Result<Vec<u8>, Error> {
     load_file_inner(&path).await
 }
 
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
+fn set_apple_working_directory() {
+    static SET_WORKING_DIRECTORY: std::sync::Once = std::sync::Once::new();
+
+    SET_WORKING_DIRECTORY.call_once(|| {
+        if let Ok(executable) = std::env::current_exe() {
+            if let Some(parent) = executable.parent() {
+                let _ = std::env::set_current_dir(parent);
+            }
+        }
+    });
+}
+
 /// Load string from the path and block until its loaded.
 /// Right now this will use load_file and `from_utf8_lossy` internally, but
 /// implementation details may change in the future
 pub async fn load_string(path: &str) -> Result<String, Error> {
     let data = load_file(path).await?;
 
-    Ok(String::from_utf8_lossy(&data).to_string())
+    Ok(String::from_utf8(data)
+        .unwrap_or_else(|error| String::from_utf8_lossy(error.as_bytes()).into_owned()))
 }
 
 /// There are super common project layout like this:
