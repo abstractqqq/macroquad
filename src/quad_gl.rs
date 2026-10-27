@@ -10,6 +10,35 @@ use std::ops::Range;
 
 pub use crate::models::Vertex;
 
+// glam's SIMD Vec4 is 16-byte aligned, which can add padding to the public
+// Vertex type. Miniquad 0.4 infers tightly packed attribute offsets, so use an
+// explicitly packed representation for GPU uploads without disabling SIMD for
+// the rest of the crate.
+#[repr(C)]
+#[derive(Clone, Copy)]
+#[cfg(feature = "3d")]
+struct PackedVertex {
+    position: [f32; 3],
+    uv: [f32; 2],
+    color: [u8; 4],
+    normal: [f32; 4],
+}
+
+#[cfg(feature = "3d")]
+impl From<&Vertex> for PackedVertex {
+    fn from(vertex: &Vertex) -> Self {
+        Self {
+            position: vertex.position.to_array(),
+            uv: vertex.uv.to_array(),
+            color: vertex.color,
+            normal: vertex.normal.to_array(),
+        }
+    }
+}
+
+#[cfg(feature = "3d")]
+const _: () = assert!(std::mem::size_of::<PackedVertex>() == 40);
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DrawMode {
     Triangles,
@@ -609,6 +638,8 @@ pub struct QuadGl {
     pub max_indices: usize,
 
     pub batch_vertex_buffer: Vec<Vertex>,
+    #[cfg(feature = "3d")]
+    packed_vertex_buffer: Vec<PackedVertex>,
     pub batch_index_buffer: Vec<u16>,
     pub batch_uniform_buffer: Vec<u8>,
 }
@@ -641,6 +672,8 @@ impl QuadGl {
 
             white_texture,
             batch_vertex_buffer: Vec::with_capacity(max_vertices),
+            #[cfg(feature = "3d")]
+            packed_vertex_buffer: Vec::with_capacity(max_vertices),
             batch_index_buffer: Vec::with_capacity(max_indices),
             batch_uniform_buffer: Vec::new(),
             max_vertices,
@@ -724,6 +757,13 @@ impl QuadGl {
         let white_texture = self.white_texture;
 
         for _ in 0..self.draw_calls.len() - self.draw_calls_bindings.len() {
+            #[cfg(feature = "3d")]
+            let vertex_buffer = ctx.new_buffer(
+                BufferType::VertexBuffer,
+                BufferUsage::Stream,
+                BufferSource::empty::<PackedVertex>(self.max_vertices),
+            );
+            #[cfg(not(feature = "3d"))]
             let vertex_buffer = ctx.new_buffer(
                 BufferType::VertexBuffer,
                 BufferUsage::Stream,
@@ -772,6 +812,22 @@ impl QuadGl {
                 ctx.begin_default_pass(PassAction::Nothing);
             }
 
+            #[cfg(feature = "3d")]
+            {
+                self.packed_vertex_buffer.clear();
+                self.packed_vertex_buffer.extend(
+                    self.batch_vertex_buffer
+                        [dc.vertices_start..(dc.vertices_start + dc.vertices_count)]
+                        .iter()
+                        .map(PackedVertex::from),
+                );
+            }
+            #[cfg(feature = "3d")]
+            ctx.buffer_update(
+                bindings.vertex_buffers[0],
+                BufferSource::slice(&self.packed_vertex_buffer),
+            );
+            #[cfg(not(feature = "3d"))]
             ctx.buffer_update(
                 bindings.vertex_buffers[0],
                 BufferSource::slice(
