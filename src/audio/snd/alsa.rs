@@ -2,7 +2,8 @@
 
 use super::{error::Error, PlaySoundParams};
 
-use quad_alsa_sys as sys;
+#[path = "alsa/alsa_sys.rs"]
+mod sys;
 
 use std::sync::mpsc;
 

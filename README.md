@@ -87,8 +87,9 @@ The main intentional differences from upstream Macroquad are:
 - **Upgraded linear algebra to `glam 0.34` with native hardware SIMD:** upgraded
   from `glam 0.27` to `0.34` and dropped the legacy `scalar-math` restriction, enabling
   hardware-accelerated SSE2 on x86_64 and NEON on 64-bit ARM. Internal matrices use
-  modern `glam::camera::rh` conventions, while re-exporting the full modernized `glam`
-  API in `rayquad::math` and the prelude.
+  modern `glam::camera::rh` conventions. Default math types include full SIMD `f32`,
+  `bool`, `i32`, and `u32` vectors/matrices re-exported in `rayquad::math` and the prelude,
+  with the opt-in `glam-all` feature available for full upstream types (`f64`, `isize`, `usize`, etc.).
 - **Faster hash collections:** production uses of `std::collections::HashMap` and
   `HashSet` have been replaced with Foldhash.
 - **Inspectable public data:** fields of publicly usable structs are public,

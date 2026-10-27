@@ -6,19 +6,15 @@ edition = "2021"
 description = """
 An opinionated, Raylib-like fork of Macroquad
 """
-readme="README.md"
+readme = "README.md"
 license = "MIT OR Apache-2.0"
 
 [features]
-audio = [
-    "dep:libc",
-    "dep:quad-alsa-sys",
-    "dep:winapi",
-    "dep:audir-sles",
-]
+audio = ["dep:libc", "dep:winapi", "dep:audir-sles"]
 3d = []
 log-rs = ["log"]
 glam-serde = ["glam/serde"]
+glam-all = ["glam/all-types"]
 default = ["font-rasterize"]
 font-rasterize = ["dep:swash"]
 
@@ -33,7 +29,11 @@ all-features = true
 
 [dependencies]
 miniquad = { version = "=0.4.11", features = ["log-impl"] }
-glam = "0.34"
+glam = { version = "0.34", default-features = false, features = [
+    "std",
+    "i32",
+    "u32",
+] }
 png = "0.18"
 foldhash = "0.2"
 swash = { version = "0.2", optional = true }
@@ -47,16 +47,25 @@ cc = "1.0"
 
 [target.'cfg(any(target_os = "linux", target_os = "dragonfly", target_os = "freebsd"))'.dependencies]
 libc = { version = "0.2", optional = true }
-quad-alsa-sys = { version = "0.3.2", optional = true }
 
 [target.'cfg(target_os = "android")'.dependencies]
 audir-sles = { version = "0.1.0", optional = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 winapi = { version = "0.3.8", optional = true, features = [
-    "debug", "ksmedia", "audioclient", "combaseapi", "coml2api", "devpkey",
-    "handleapi", "mmdeviceapi", "objbase", "unknwnbase", "winerror",
-    "synchapi", "winbase",
+    "debug",
+    "ksmedia",
+    "audioclient",
+    "combaseapi",
+    "coml2api",
+    "devpkey",
+    "handleapi",
+    "mmdeviceapi",
+    "objbase",
+    "unknwnbase",
+    "winerror",
+    "synchapi",
+    "winbase",
 ] }
 
 # Reference WAV implementation for the tests of src/audio/snd/wav.rs.

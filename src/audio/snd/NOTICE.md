@@ -9,6 +9,7 @@ This directory is derived from `quad-snd` 0.2.8
 
 Changes from upstream:
 - Files renamed (`*_snd.rs` -> backend name) and `crate::` paths rewritten.
-- Platform backends: alsa (Linux/BSD), coreaudio (macOS/iOS), wasapi (Windows),
+- Platform backends: alsa (Linux/BSD, with minimal ALSA bindings in `alsa/alsa_sys.rs`
+  replacing `quad-alsa-sys`), coreaudio (macOS/iOS), wasapi (Windows),
   opensles (Android), web (wasm32, expects `audio.js` glue).
 - `audio.js` and `UPSTREAM_Cargo.toml.orig` are kept for reference only.
