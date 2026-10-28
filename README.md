@@ -81,7 +81,10 @@ The main intentional differences from upstream Macroquad are:
   linear resampling run in a single integer-precision pass. Audio handles use
   `NonZeroU32` for niche optimization, `MixerControl` provides lock-free `AtomicU32` ID
   generation making audio contexts `Send + Sync`, and the mixer uses direct-indexed
-  storage for $O(1)$ lookups without hashing overhead.
+  storage for $O(1)$ lookups without hashing overhead. Includes full playback control
+  with sound duration tracking, pause/resume, and click-free sample seeking featuring
+  a 128-frame (~2.9 ms) $C^0$ micro-ramp crossfade to eliminate audio popping during
+  game rewinds and scrub operations.
 - **Vendored and modernized random module:** vendored `quad-rand` directly into
   RayQuad. Replaced float-based integer range conversions with fast bounded
   Lemire integer multiplication, added full 64-bit entropy sampling,

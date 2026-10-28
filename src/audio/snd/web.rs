@@ -6,10 +6,17 @@ extern "C" {
     fn audio_add_buffer(content: *const u8, content_len: u32) -> u32;
     fn audio_play_buffer(buffer: u32, volume: f32, repeat: bool) -> u32;
     fn audio_source_is_loaded(buffer: u32) -> bool;
+    fn audio_source_duration(buffer: u32) -> f32;
     fn audio_source_set_volume(buffer: u32, volume: f32);
     fn audio_source_stop(buffer: u32);
+    fn audio_source_pause(buffer: u32);
+    fn audio_source_resume(buffer: u32);
+    fn audio_source_seek(buffer: u32, position: f32);
     fn audio_source_delete(buffer: u32);
     fn audio_playback_stop(playback: u32);
+    fn audio_playback_pause(playback: u32);
+    fn audio_playback_resume(playback: u32);
+    fn audio_playback_seek(playback: u32, position: f32);
     fn audio_playback_set_volume(playback: u32, volume: f32);
 }
 
@@ -39,6 +46,18 @@ impl Playback {
         unsafe { audio_playback_stop(self.0.get()) }
     }
 
+    pub fn pause(&self, _ctx: &AudioContext) {
+        unsafe { audio_playback_pause(self.0.get()) }
+    }
+
+    pub fn resume(&self, _ctx: &AudioContext) {
+        unsafe { audio_playback_resume(self.0.get()) }
+    }
+
+    pub fn seek(&self, _ctx: &AudioContext, position: f32) {
+        unsafe { audio_playback_seek(self.0.get(), position) }
+    }
+
     pub fn set_volume(&self, _ctx: &AudioContext, volume: f32) {
         unsafe { audio_playback_set_volume(self.0.get(), volume) }
     }
@@ -65,6 +84,10 @@ impl Sound {
         unsafe { audio_source_is_loaded(self.0.get()) }
     }
 
+    pub fn duration(&self) -> f32 {
+        unsafe { audio_source_duration(self.0.get()) }
+    }
+
     pub fn play(&self, _ctx: &AudioContext, params: PlaySoundParams) -> Playback {
         let id = unsafe { audio_play_buffer(self.0.get(), params.volume, params.looped) };
 
@@ -73,6 +96,18 @@ impl Sound {
 
     pub fn stop(&self, _ctx: &AudioContext) {
         unsafe { audio_source_stop(self.0.get()) }
+    }
+
+    pub fn pause(&self, _ctx: &AudioContext) {
+        unsafe { audio_source_pause(self.0.get()) }
+    }
+
+    pub fn resume(&self, _ctx: &AudioContext) {
+        unsafe { audio_source_resume(self.0.get()) }
+    }
+
+    pub fn seek(&self, _ctx: &AudioContext, position: f32) {
+        unsafe { audio_source_seek(self.0.get(), position) }
     }
 
     pub fn set_volume(&self, _ctx: &AudioContext, volume: f32) {

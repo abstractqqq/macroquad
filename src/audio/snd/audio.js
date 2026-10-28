@@ -92,6 +92,11 @@ function recycle_playback() {
             source: audio_context.createBufferSource(),
             gain_node: audio_context.createGain(),
             ended: null,
+            start_time: 0,
+            pause_offset: 0,
+            is_paused: false,
+            looped: false,
+            volume: 1,
         };
 
         playbacks.push(playback);
@@ -109,9 +114,15 @@ function stop(playback) {
 
         playback.sound_key = 0;
         playback.playback_key = 0;
+        playback.is_paused = false;
     } catch (e) {
         console.error("Error stopping sound", e);
     }
+}
+
+function audio_source_duration(sound_key) {
+    let buf = sounds.get(sound_key);
+    return buf ? buf.duration : 0.0;
 }
 
 function audio_play_buffer(sound_key, volume, repeat) {
@@ -121,6 +132,11 @@ function audio_play_buffer(sound_key, volume, repeat) {
 
     pb.sound_key = sound_key;
     pb.playback_key = playback_key;
+    pb.start_time = audio_context.currentTime;
+    pb.pause_offset = 0;
+    pb.is_paused = false;
+    pb.looped = repeat;
+    pb.volume = volume;
 
     pb.source.connect(pb.gain_node);
     pb.gain_node.connect(audio_context.destination);
@@ -143,9 +159,102 @@ function audio_play_buffer(sound_key, volume, repeat) {
     return playback_key;
 }
 
+function audio_playback_pause(playback_key) {
+    let pb = playbacks.find(p => p.playback_key === playback_key);
+    if (!pb || pb.is_paused || pb.sound_key === 0) return;
+
+    let buf = sounds.get(pb.sound_key);
+    let dur = buf ? buf.duration : 1.0;
+    let elapsed = audio_context.currentTime - pb.start_time;
+    pb.pause_offset = pb.looped ? (elapsed % dur) : Math.min(elapsed, dur);
+    pb.is_paused = true;
+
+    try {
+        pb.source.removeEventListener('ended', pb.ended);
+        pb.source.stop();
+        pb.source.disconnect();
+    } catch (e) {}
+}
+
+function audio_playback_resume(playback_key) {
+    let pb = playbacks.find(p => p.playback_key === playback_key);
+    if (!pb || !pb.is_paused || pb.sound_key === 0) return;
+
+    let buf = sounds.get(pb.sound_key);
+    if (!buf) return;
+
+    pb.source = audio_context.createBufferSource();
+    pb.source.buffer = buf;
+    pb.source.loop = pb.looped;
+    pb.source.connect(pb.gain_node);
+    pb.source.addEventListener('ended', pb.ended);
+
+    pb.start_time = audio_context.currentTime - pb.pause_offset;
+    pb.is_paused = false;
+
+    try {
+        pb.source.start(0, pb.pause_offset);
+    } catch (e) {
+        console.error("Error resuming sound", e);
+    }
+}
+
+function audio_playback_seek(playback_key, position) {
+    let pb = playbacks.find(p => p.playback_key === playback_key);
+    if (!pb || pb.sound_key === 0) return;
+
+    let buf = sounds.get(pb.sound_key);
+    if (!buf) return;
+
+    let dur = buf.duration;
+    let target = pb.looped ? (position % dur) : Math.min(Math.max(position, 0), dur);
+
+    if (pb.is_paused) {
+        pb.pause_offset = target;
+    } else {
+        try {
+            pb.source.removeEventListener('ended', pb.ended);
+            pb.source.stop();
+            pb.source.disconnect();
+        } catch (e) {}
+
+        pb.source = audio_context.createBufferSource();
+        pb.source.buffer = buf;
+        pb.source.loop = pb.looped;
+        pb.source.connect(pb.gain_node);
+        pb.source.addEventListener('ended', pb.ended);
+
+        pb.start_time = audio_context.currentTime - target;
+        try {
+            pb.source.start(0, target);
+        } catch (e) {
+            console.error("Error seeking sound", e);
+        }
+    }
+}
+
+function audio_source_pause(sound_key) {
+    playbacks.forEach(pb => {
+        if (pb.sound_key === sound_key) audio_playback_pause(pb.playback_key);
+    });
+}
+
+function audio_source_resume(sound_key) {
+    playbacks.forEach(pb => {
+        if (pb.sound_key === sound_key) audio_playback_resume(pb.playback_key);
+    });
+}
+
+function audio_source_seek(sound_key, position) {
+    playbacks.forEach(pb => {
+        if (pb.sound_key === sound_key) audio_playback_seek(pb.playback_key, position);
+    });
+}
+
 function audio_source_set_volume(sound_key, volume) {
     playbacks.forEach(playback => {
         if (playback.sound_key === sound_key) {
+            playback.volume = volume;
             playback.gain_node.gain.value = volume;
         }
     });
@@ -173,6 +282,7 @@ function audio_playback_set_volume(playback_key, volume) {
     let playback = playbacks.find(playback => playback.playback_key === playback_key);
 
     if (playback != null) {
+        playback.volume = volume;
         playback.gain_node.gain.value = volume;
     }
 }
@@ -182,10 +292,17 @@ function register_plugin(importObject) {
     importObject.env.audio_add_buffer = audio_add_buffer;
     importObject.env.audio_play_buffer = audio_play_buffer;
     importObject.env.audio_source_is_loaded = audio_source_is_loaded;
+    importObject.env.audio_source_duration = audio_source_duration;
     importObject.env.audio_source_set_volume = audio_source_set_volume;
     importObject.env.audio_source_stop = audio_source_stop;
+    importObject.env.audio_source_pause = audio_source_pause;
+    importObject.env.audio_source_resume = audio_source_resume;
+    importObject.env.audio_source_seek = audio_source_seek;
     importObject.env.audio_source_delete = audio_source_delete;
     importObject.env.audio_playback_stop = audio_playback_stop;
+    importObject.env.audio_playback_pause = audio_playback_pause;
+    importObject.env.audio_playback_resume = audio_playback_resume;
+    importObject.env.audio_playback_seek = audio_playback_seek;
     importObject.env.audio_playback_set_volume = audio_playback_set_volume;
 }
 

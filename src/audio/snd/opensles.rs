@@ -429,13 +429,18 @@ impl AudioContext {
 
 pub struct Sound {
     pub sound_id: NonZeroU32,
+    pub duration: f32,
 }
 
 impl Sound {
     pub fn load(ctx: &AudioContext, data: &[u8]) -> Result<Sound, super::Error> {
-        let sound_id = ctx.mixer_ctrl.load(data)?;
+        let (sound_id, duration) = ctx.mixer_ctrl.load(data)?;
 
-        Ok(Sound { sound_id })
+        Ok(Sound { sound_id, duration })
+    }
+
+    pub fn duration(&self) -> f32 {
+        self.duration
     }
 
     pub fn play(&self, ctx: &AudioContext, params: PlaySoundParams) -> Playback {
@@ -444,6 +449,19 @@ impl Sound {
 
     pub fn stop(&self, ctx: &AudioContext) {
         ctx.mixer_ctrl.stop_all(self.sound_id);
+    }
+
+    pub fn pause(&self, ctx: &AudioContext) {
+        ctx.mixer_ctrl.pause_all(self.sound_id);
+    }
+
+    pub fn resume(&self, ctx: &AudioContext) {
+        ctx.mixer_ctrl.resume_all(self.sound_id);
+    }
+
+    pub fn seek(&self, ctx: &AudioContext, position: f32) {
+        let sample_offset = (position.max(0.0) * 44100.0) as usize * 2;
+        ctx.mixer_ctrl.seek_all(self.sound_id, sample_offset);
     }
 
     pub fn set_volume(&self, ctx: &AudioContext, volume: f32) {

@@ -327,3 +327,71 @@ mod wav {
         }
     }
 }
+
+mod mixer_playback {
+    use super::super::mixer::Mixer;
+    use super::super::PlaySoundParams;
+    use super::fixture;
+
+    #[test]
+    fn duration_is_accurate() {
+        let (_builder, ctrl) = Mixer::new();
+        let (_id, duration) = ctrl.load(&fixture("stereo_44k.wav")).unwrap();
+        // 155648 samples = 77824 stereo frames @ 44100 Hz = 1.7647166 s
+        let expected = (super::EXPECTED_LEN / 2) as f32 / 44100.0;
+        assert!((duration - expected).abs() < 1e-4);
+    }
+
+    #[test]
+    fn pause_and_resume() {
+        let (builder, ctrl) = Mixer::new();
+        let mut mixer = builder.build();
+
+        let (sound_id, _) = ctrl.load(&fixture("stereo_44k.wav")).unwrap();
+        let pb = ctrl.play(sound_id, PlaySoundParams { looped: true, volume: 1.0 });
+
+        let mut buf = vec![0.0f32; 1000];
+        mixer.fill_audio_buffer(&mut buf, 500);
+        let has_sound = buf.iter().any(|&s| s.abs() > 0.01);
+        assert!(has_sound, "Playing sound should produce non-zero samples");
+
+        // Pause
+        ctrl.pause(pb.play_id);
+        mixer.fill_audio_buffer(&mut buf, 500);
+        let is_silent = buf.iter().all(|&s| s == 0.0);
+        assert!(is_silent, "Paused sound should produce silence");
+
+        // Resume
+        ctrl.resume(pb.play_id);
+        mixer.fill_audio_buffer(&mut buf, 500);
+        let has_sound_again = buf.iter().any(|&s| s.abs() > 0.01);
+        assert!(has_sound_again, "Resumed sound should produce non-zero samples again");
+    }
+
+    #[test]
+    fn seek_with_micro_ramp_continuity() {
+        let (builder, ctrl) = Mixer::new();
+        let mut mixer = builder.build();
+
+        let (sound_id, _) = ctrl.load(&fixture("stereo_44k.wav")).unwrap();
+        let pb = ctrl.play(sound_id, PlaySoundParams { looped: true, volume: 1.0 });
+
+        // Render first buffer
+        let mut buf1 = vec![0.0f32; 1000];
+        mixer.fill_audio_buffer(&mut buf1, 500);
+        let last_l = buf1[998];
+        let last_r = buf1[999];
+
+        // Seek far ahead into track
+        ctrl.seek(pb.play_id, 40000);
+
+        // Render next buffer
+        let mut buf2 = vec![0.0f32; 1000];
+        mixer.fill_audio_buffer(&mut buf2, 500);
+
+        // The very first frame of buf2 must match last_l and last_r with C0 continuity
+        assert!((buf2[0] - last_l).abs() < 1e-5, "Left channel C0 continuity preserved on seek");
+        assert!((buf2[1] - last_r).abs() < 1e-5, "Right channel C0 continuity preserved on seek");
+    }
+}
+

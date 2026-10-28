@@ -15,7 +15,15 @@ enum AudioMessage {
     SetVolume(NonZeroU32, f32),
     SetVolumeAll(NonZeroU32, f32),
     Delete(NonZeroU32),
+    Pause(NonZeroU32),
+    PauseAll(NonZeroU32),
+    Resume(NonZeroU32),
+    ResumeAll(NonZeroU32),
+    Seek(NonZeroU32, usize),
+    SeekAll(NonZeroU32, usize),
 }
+
+pub const RAMP_FRAMES: usize = 128; // ~2.9ms at 44.1kHz micro-ramp to eliminate clicks/pops
 
 #[derive(Debug)]
 pub struct SoundState {
@@ -25,9 +33,52 @@ pub struct SoundState {
     data: Arc<[f32]>,
     looped: bool,
     volume: f32,
+    paused: bool,
+    last_l: f32,
+    last_r: f32,
+    ramp_last_l: f32,
+    ramp_last_r: f32,
+    ramp_remaining: usize,
 }
 
 impl SoundState {
+    fn new(sound_id: NonZeroU32, play_id: NonZeroU32, data: Arc<[f32]>, looped: bool, volume: f32) -> Self {
+        Self {
+            sound_id,
+            play_id,
+            sample: 0,
+            data,
+            looped,
+            volume,
+            paused: false,
+            last_l: 0.0,
+            last_r: 0.0,
+            ramp_last_l: 0.0,
+            ramp_last_r: 0.0,
+            ramp_remaining: 0,
+        }
+    }
+
+    pub fn seek(&mut self, sample_offset: usize) {
+        self.ramp_last_l = self.last_l;
+        self.ramp_last_r = self.last_r;
+        let target = if self.looped && !self.data.is_empty() {
+            sample_offset % self.data.len()
+        } else {
+            sample_offset.min(self.data.len())
+        };
+        self.sample = target & !1;
+        self.ramp_remaining = RAMP_FRAMES;
+    }
+
+    pub fn pause(&mut self) {
+        self.paused = true;
+    }
+
+    pub fn resume(&mut self) {
+        self.paused = false;
+    }
+
     fn get_samples(&mut self, n: usize) -> &[f32] {
         let data = &self.data[self.sample..];
 
@@ -80,6 +131,19 @@ impl Playback {
         ctx.mixer_ctrl.send(AudioMessage::Stop(self.play_id));
     }
 
+    pub fn pause(&self, ctx: &AudioContext) {
+        ctx.mixer_ctrl.pause(self.play_id);
+    }
+
+    pub fn resume(&self, ctx: &AudioContext) {
+        ctx.mixer_ctrl.resume(self.play_id);
+    }
+
+    pub fn seek(&self, ctx: &AudioContext, position: f32) {
+        let sample_offset = (position.max(0.0) * 44100.0) as usize * 2;
+        ctx.mixer_ctrl.seek(self.play_id, sample_offset);
+    }
+
     pub fn set_volume(&self, ctx: &AudioContext, volume: f32) {
         ctx.mixer_ctrl
             .send(AudioMessage::SetVolume(self.play_id, volume));
@@ -87,8 +151,9 @@ impl Playback {
 }
 
 impl MixerControl {
-    pub fn load(&self, data: &[u8]) -> Result<NonZeroU32, super::Error> {
+    pub fn load(&self, data: &[u8]) -> Result<(NonZeroU32, f32), super::Error> {
         let samples = load_samples_from_file(data)?;
+        let duration = (samples.len() / 2) as f32 / 44100.0;
 
         let sound_id = next_id(&self.sound_id);
 
@@ -96,7 +161,7 @@ impl MixerControl {
             .send(super::mixer::AudioMessage::AddSound(sound_id, samples))
             .unwrap_or_else(|_| println!("Audio thread died"));
 
-        Ok(sound_id)
+        Ok((sound_id, duration))
     }
 
     pub fn play(&self, sound_id: NonZeroU32, params: PlaySoundParams) -> Playback {
@@ -118,6 +183,30 @@ impl MixerControl {
 
     pub fn stop_all(&self, sound_id: NonZeroU32) {
         self.send(AudioMessage::StopAll(sound_id));
+    }
+
+    pub fn pause(&self, play_id: NonZeroU32) {
+        self.send(AudioMessage::Pause(play_id));
+    }
+
+    pub fn pause_all(&self, sound_id: NonZeroU32) {
+        self.send(AudioMessage::PauseAll(sound_id));
+    }
+
+    pub fn resume(&self, play_id: NonZeroU32) {
+        self.send(AudioMessage::Resume(play_id));
+    }
+
+    pub fn resume_all(&self, sound_id: NonZeroU32) {
+        self.send(AudioMessage::ResumeAll(sound_id));
+    }
+
+    pub fn seek(&self, play_id: NonZeroU32, sample_offset: usize) {
+        self.send(AudioMessage::Seek(play_id, sample_offset));
+    }
+
+    pub fn seek_all(&self, sound_id: NonZeroU32, sample_offset: usize) {
+        self.send(AudioMessage::SeekAll(sound_id, sample_offset));
     }
 
     pub fn set_volume_all(&self, sound_id: NonZeroU32, volume: f32) {
@@ -172,14 +261,13 @@ impl Mixer {
                 AudioMessage::Play(sound_id, play_id, looped, volume) => {
                     let idx = (sound_id.get() - 1) as usize;
                     if let Some(Some(data)) = self.sounds.get(idx) {
-                        self.mixer_state.push(SoundState {
+                        self.mixer_state.push(SoundState::new(
                             sound_id,
                             play_id,
-                            sample: 0,
-                            data: data.clone(),
+                            data.clone(),
                             looped,
                             volume,
-                        });
+                        ));
                     }
                 }
                 AudioMessage::Stop(play_id) => {
@@ -192,6 +280,36 @@ impl Mixer {
                         if self.mixer_state[i].sound_id == sound_id {
                             self.mixer_state.swap_remove(i);
                         }
+                    }
+                }
+                AudioMessage::Pause(play_id) => {
+                    if let Some(sound) = self.mixer_state.iter_mut().find(|s| s.play_id == play_id) {
+                        sound.pause();
+                    }
+                }
+                AudioMessage::PauseAll(sound_id) => {
+                    for sound in self.mixer_state.iter_mut().filter(|s| s.sound_id == sound_id) {
+                        sound.pause();
+                    }
+                }
+                AudioMessage::Resume(play_id) => {
+                    if let Some(sound) = self.mixer_state.iter_mut().find(|s| s.play_id == play_id) {
+                        sound.resume();
+                    }
+                }
+                AudioMessage::ResumeAll(sound_id) => {
+                    for sound in self.mixer_state.iter_mut().filter(|s| s.sound_id == sound_id) {
+                        sound.resume();
+                    }
+                }
+                AudioMessage::Seek(play_id, sample_offset) => {
+                    if let Some(sound) = self.mixer_state.iter_mut().find(|s| s.play_id == play_id) {
+                        sound.seek(sample_offset);
+                    }
+                }
+                AudioMessage::SeekAll(sound_id, sample_offset) => {
+                    for sound in self.mixer_state.iter_mut().filter(|s| s.sound_id == sound_id) {
+                        sound.seek(sample_offset);
                     }
                 }
                 AudioMessage::SetVolume(play_id, volume) => {
@@ -230,19 +348,55 @@ impl Mixer {
         let mut i = 0;
 
         while let Some(sound) = self.mixer_state.get_mut(i) {
+            if sound.paused {
+                i += 1;
+                continue;
+            }
+
+            let data = Arc::clone(&sound.data);
             let volume = sound.volume;
-            let mut remainder = buffer.len();
+            let mut buf_offset = 0;
 
             loop {
-                let samples = sound.get_samples(remainder);
+                let remainder = buffer.len() - buf_offset;
+                let start = sound.sample;
+                let available = data.len().saturating_sub(start);
+                let count = remainder.min(available);
+                sound.sample += count;
+                let samples = &data[start..start + count];
 
-                for (b, s) in buffer.iter_mut().zip(samples) {
-                    *b += s * volume;
+                if count >= 2 {
+                    sound.last_l = samples[count - 2];
+                    sound.last_r = samples[count - 1];
                 }
 
-                remainder -= samples.len();
+                if sound.ramp_remaining > 0 {
+                    let mut s_idx = 0;
+                    while s_idx + 1 < count && sound.ramp_remaining > 0 {
+                        let factor = (RAMP_FRAMES - sound.ramp_remaining) as f32 / RAMP_FRAMES as f32;
+                        let s_l = samples[s_idx] * factor + sound.ramp_last_l * (1.0 - factor);
+                        let s_r = samples[s_idx + 1] * factor + sound.ramp_last_r * (1.0 - factor);
+                        buffer[buf_offset + s_idx] += s_l * volume;
+                        buffer[buf_offset + s_idx + 1] += s_r * volume;
+                        sound.ramp_remaining -= 1;
+                        s_idx += 2;
+                    }
+                    for (b, s) in buffer[buf_offset + s_idx..buf_offset + count].iter_mut().zip(&samples[s_idx..]) {
+                        *b += s * volume;
+                    }
+                } else {
+                    for (b, s) in buffer[buf_offset..buf_offset + count].iter_mut().zip(samples) {
+                        *b += s * volume;
+                    }
+                }
 
-                if remainder > 0 && sound.looped {
+                buf_offset += count;
+
+                if buf_offset >= buffer.len() {
+                    break;
+                }
+
+                if sound.looped {
                     sound.rewind();
                     continue;
                 }
@@ -250,7 +404,7 @@ impl Mixer {
                 break;
             }
 
-            if remainder > 0 {
+            if buf_offset < buffer.len() {
                 self.mixer_state.swap_remove(i);
             } else {
                 i += 1;
