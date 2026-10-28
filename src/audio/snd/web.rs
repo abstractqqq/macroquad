@@ -1,4 +1,5 @@
 use super::PlaySoundParams;
+use core::num::NonZeroU32;
 
 extern "C" {
     fn audio_init();
@@ -29,23 +30,25 @@ impl AudioContext {
     }
 }
 
-pub struct Sound(u32);
+pub struct Sound(pub NonZeroU32);
 
-pub struct Playback(u32);
+pub struct Playback(pub NonZeroU32);
 
 impl Playback {
     pub fn stop(self, _ctx: &AudioContext) {
-        unsafe { audio_playback_stop(self.0) }
+        unsafe { audio_playback_stop(self.0.get()) }
     }
 
     pub fn set_volume(&self, _ctx: &AudioContext, volume: f32) {
-        unsafe { audio_playback_set_volume(self.0, volume) }
+        unsafe { audio_playback_set_volume(self.0.get(), volume) }
     }
 }
 
 impl Sound {
     pub fn load(_ctx: &AudioContext, data: &[u8]) -> Result<Sound, super::Error> {
         let buffer = unsafe { audio_add_buffer(data.as_ptr(), data.len() as u32) };
+        let buffer = NonZeroU32::new(buffer)
+            .ok_or_else(|| super::Error::Decode("invalid sound buffer ID from JS".into()))?;
         Ok(Sound(buffer))
     }
 
@@ -59,24 +62,24 @@ impl Sound {
     /// sound.play(ctx, Default::default());
     ///```
     pub fn is_loaded(&self) -> bool {
-        unsafe { audio_source_is_loaded(self.0) }
+        unsafe { audio_source_is_loaded(self.0.get()) }
     }
 
     pub fn play(&self, _ctx: &AudioContext, params: PlaySoundParams) -> Playback {
-        let id = unsafe { audio_play_buffer(self.0, params.volume, params.looped) };
+        let id = unsafe { audio_play_buffer(self.0.get(), params.volume, params.looped) };
 
-        Playback(id)
+        Playback(NonZeroU32::new(id).expect("invalid playback id from JS"))
     }
 
     pub fn stop(&self, _ctx: &AudioContext) {
-        unsafe { audio_source_stop(self.0) }
+        unsafe { audio_source_stop(self.0.get()) }
     }
 
     pub fn set_volume(&self, _ctx: &AudioContext, volume: f32) {
-        unsafe { audio_source_set_volume(self.0, volume) }
+        unsafe { audio_source_set_volume(self.0.get(), volume) }
     }
 
     pub fn delete(&self, _ctx: &AudioContext) {
-        unsafe { audio_source_delete(self.0) }
+        unsafe { audio_source_delete(self.0.get()) }
     }
 }

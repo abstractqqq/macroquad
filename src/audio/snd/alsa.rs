@@ -2,6 +2,8 @@
 
 use super::{error::Error, PlaySoundParams};
 
+use core::num::NonZeroU32;
+
 #[path = "alsa/alsa_sys.rs"]
 mod sys;
 
@@ -165,7 +167,7 @@ impl AudioContext {
 }
 
 pub struct Sound {
-    sound_id: u32,
+    pub sound_id: NonZeroU32,
 }
 
 impl Sound {

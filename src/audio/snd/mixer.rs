@@ -2,25 +2,25 @@ use super::vorbis::decode_ogg;
 use super::wav::decode_wav;
 use super::{AudioContext, Error, PlaySoundParams};
 
-use std::cell::Cell;
-use foldhash::{HashMap, HashMapExt};
-use std::sync::Arc;
+use core::num::NonZeroU32;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
+use std::sync::Arc;
 
 enum AudioMessage {
-    AddSound(u32, Vec<f32>),
-    Play(u32, u32, bool, f32),
-    Stop(u32),
-    StopAll(u32),
-    SetVolume(u32, f32),
-    SetVolumeAll(u32, f32),
-    Delete(u32),
+    AddSound(NonZeroU32, Vec<f32>),
+    Play(NonZeroU32, NonZeroU32, bool, f32),
+    Stop(NonZeroU32),
+    StopAll(NonZeroU32),
+    SetVolume(NonZeroU32, f32),
+    SetVolumeAll(NonZeroU32, f32),
+    Delete(NonZeroU32),
 }
 
 #[derive(Debug)]
 pub struct SoundState {
-    sound_id: u32,
-    play_id: u32,
+    pub sound_id: NonZeroU32,
+    pub play_id: NonZeroU32,
     sample: usize,
     data: Arc<[f32]>,
     looped: bool,
@@ -46,7 +46,7 @@ impl SoundState {
 
 pub struct Mixer {
     rx: mpsc::Receiver<AudioMessage>,
-    sounds: HashMap<u32, Arc<[f32]>>,
+    sounds: Vec<Option<Arc<[f32]>>>,
     mixer_state: Vec<SoundState>,
 }
 
@@ -56,12 +56,23 @@ pub struct MixerBuilder {
 
 pub struct MixerControl {
     tx: mpsc::Sender<AudioMessage>,
-    sound_id: Cell<u32>,
-    play_id: Cell<u32>,
+    sound_id: AtomicU32,
+    play_id: AtomicU32,
+}
+
+fn next_id(counter: &AtomicU32) -> NonZeroU32 {
+    let mut cur = counter.load(Ordering::Relaxed);
+    loop {
+        let next = if cur == u32::MAX { 1 } else { cur + 1 };
+        match counter.compare_exchange_weak(cur, next, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(val) => return NonZeroU32::new(val).unwrap_or(NonZeroU32::MIN),
+            Err(actual) => cur = actual,
+        }
+    }
 }
 
 pub struct Playback {
-    play_id: u32,
+    pub play_id: NonZeroU32,
 }
 
 impl Playback {
@@ -76,21 +87,20 @@ impl Playback {
 }
 
 impl MixerControl {
-    pub fn load(&self, data: &[u8]) -> Result<u32, super::Error> {
+    pub fn load(&self, data: &[u8]) -> Result<NonZeroU32, super::Error> {
         let samples = load_samples_from_file(data)?;
 
-        let sound_id = self.sound_id.get();
+        let sound_id = next_id(&self.sound_id);
 
         self.tx
             .send(super::mixer::AudioMessage::AddSound(sound_id, samples))
             .unwrap_or_else(|_| println!("Audio thread died"));
-        self.sound_id.set(sound_id + 1);
 
         Ok(sound_id)
     }
 
-    pub fn play(&self, sound_id: u32, params: PlaySoundParams) -> Playback {
-        let play_id = self.play_id.get();
+    pub fn play(&self, sound_id: NonZeroU32, params: PlaySoundParams) -> Playback {
+        let play_id = next_id(&self.play_id);
 
         self.send(AudioMessage::Play(
             sound_id,
@@ -99,24 +109,22 @@ impl MixerControl {
             params.volume,
         ));
 
-        self.play_id.set(play_id + 1);
-
         Playback { play_id }
     }
 
-    pub fn stop(&self, play_id: u32) {
+    pub fn stop(&self, play_id: NonZeroU32) {
         self.send(AudioMessage::Stop(play_id));
     }
 
-    pub fn stop_all(&self, sound_id: u32) {
+    pub fn stop_all(&self, sound_id: NonZeroU32) {
         self.send(AudioMessage::StopAll(sound_id));
     }
 
-    pub fn set_volume_all(&self, sound_id: u32, volume: f32) {
+    pub fn set_volume_all(&self, sound_id: NonZeroU32, volume: f32) {
         self.send(AudioMessage::SetVolumeAll(sound_id, volume));
     }
 
-    pub fn delete(&self, sound_id: u32) {
+    pub fn delete(&self, sound_id: NonZeroU32) {
         self.send(AudioMessage::Delete(sound_id));
     }
 
@@ -131,7 +139,7 @@ impl MixerBuilder {
     pub fn build(self) -> Mixer {
         Mixer {
             rx: self.rx,
-            sounds: HashMap::new(),
+            sounds: Vec::new(),
             mixer_state: vec![],
         }
     }
@@ -145,8 +153,8 @@ impl Mixer {
             MixerBuilder { rx },
             MixerControl {
                 tx,
-                sound_id: Cell::new(0),
-                play_id: Cell::new(0),
+                sound_id: AtomicU32::new(1),
+                play_id: AtomicU32::new(1),
             },
         )
     }
@@ -155,10 +163,15 @@ impl Mixer {
         while let Ok(message) = self.rx.try_recv() {
             match message {
                 AudioMessage::AddSound(id, data) => {
-                    self.sounds.insert(id, data.into());
+                    let idx = (id.get() - 1) as usize;
+                    if idx >= self.sounds.len() {
+                        self.sounds.resize(idx + 1, None);
+                    }
+                    self.sounds[idx] = Some(data.into());
                 }
                 AudioMessage::Play(sound_id, play_id, looped, volume) => {
-                    if let Some(data) = self.sounds.get(&sound_id) {
+                    let idx = (sound_id.get() - 1) as usize;
+                    if let Some(Some(data)) = self.sounds.get(idx) {
                         self.mixer_state.push(SoundState {
                             sound_id,
                             play_id,
@@ -202,7 +215,10 @@ impl Mixer {
                             self.mixer_state.swap_remove(i);
                         }
                     }
-                    self.sounds.remove(&sound_id);
+                    let idx = (sound_id.get() - 1) as usize;
+                    if let Some(slot) = self.sounds.get_mut(idx) {
+                        *slot = None;
+                    }
                 }
             }
         }

@@ -2,6 +2,7 @@
 // https://github.com/norse-rs/audir/blob/master/audir/src/wasapi/mod.rs
 
 use super::PlaySoundParams;
+use core::num::NonZeroU32;
 
 pub use super::mixer::Playback;
 
@@ -204,7 +205,7 @@ impl AudioContext {
 }
 
 pub struct Sound {
-    sound_id: u32,
+    pub sound_id: NonZeroU32,
 }
 
 impl Sound {

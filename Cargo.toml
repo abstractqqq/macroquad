@@ -29,11 +29,7 @@ all-features = true
 
 [dependencies]
 miniquad = { version = "=0.4.11", features = ["log-impl"] }
-glam = { version = "0.34", default-features = false, features = [
-    "std",
-    "i32",
-    "u32",
-] }
+glam = { version = "0.34", default-features = false, features = ["std", "i32"] }
 png = "0.18"
 foldhash = "0.2"
 swash = { version = "0.2", optional = true }

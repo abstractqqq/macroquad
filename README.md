@@ -78,7 +78,10 @@ The main intentional differences from upstream Macroquad are:
   into RayQuad, removing `audrey`, `dasp`, `hound`, and `lewton` crate dependencies.
   WAV files decode via a lightweight, in-memory reader (~14–22× faster), Ogg Vorbis
   decodes via embedded `stb_vorbis` (~2–3× faster), and mono-to-stereo expansion and
-  linear resampling run in a single integer-precision pass.
+  linear resampling run in a single integer-precision pass. Audio handles use
+  `NonZeroU32` for niche optimization, `MixerControl` provides lock-free `AtomicU32` ID
+  generation making audio contexts `Send + Sync`, and the mixer uses direct-indexed
+  storage for $O(1)$ lookups without hashing overhead.
 - **Vendored and modernized random module:** vendored `quad-rand` directly into
   RayQuad. Replaced float-based integer range conversions with fast bounded
   Lemire integer multiplication, added full 64-bit entropy sampling,
