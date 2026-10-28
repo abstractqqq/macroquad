@@ -7,9 +7,16 @@ use crate::{
     quad_gl::{DrawMode, QuadGl},
 };
 
-use super::{Font, TextDimensions};
+use super::{line_break::can_break_between, Font, TextDimensions};
 
 pub(crate) const BASE_FONT_SIZE: f32 = 32.0;
+
+#[derive(Clone, Copy)]
+struct BreakCandidate {
+    cluster_idx: usize,
+    glyph_idx: usize,
+    pen_x: f32,
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct PositionedGlyph {
@@ -64,7 +71,7 @@ impl TextRenderer {
         u32::try_from(text.len()).expect("Text exceeds 4 GiB");
         let line_height = font.data.ascent + font.data.descent + font.data.line_gap;
         let fallback = font.data.get_glyph('?');
-        let mut glyphs = Vec::with_capacity(character_count);
+        let mut glyphs: Vec<PositionedGlyph> = Vec::with_capacity(character_count);
         let mut clusters = Vec::with_capacity(character_count);
         let mut width = 0.0_f32;
         let mut line_count = 0usize;
@@ -75,36 +82,84 @@ impl TextRenderer {
             line_count += 1;
             let mut pen_x = 0.0;
             let mut baseline_y = (line_count - 1) as f32 * line_height;
+            let mut prev_char: Option<char> = None;
+            let mut line_start_cluster = clusters.len();
+            let mut last_break: Option<BreakCandidate> = None;
 
             for (char_byte_offset, ch) in line.char_indices() {
+                if let Some(prev) = prev_char {
+                    if can_break_between(prev, ch) {
+                        last_break = Some(BreakCandidate {
+                            cluster_idx: clusters.len(),
+                            glyph_idx: glyphs.len(),
+                            pen_x,
+                        });
+                    }
+                }
+
                 let Some(metric) = font.data.get_glyph(ch).or(fallback) else {
                     clusters.push(ShapedCluster {
                         source: (source_offset + char_byte_offset) as u32
                             ..(source_offset + char_byte_offset + ch.len_utf8()) as u32,
                         glyphs: glyphs.len() as u32..glyphs.len() as u32,
                     });
+                    prev_char = Some(ch);
                     continue;
                 };
 
                 let advance = metric.advance;
                 let wrapped = max_width.is_some_and(|max_w| pen_x > 0.0 && pen_x + advance > max_w);
                 if wrapped {
-                    width = width.max(pen_x);
-                    pen_x = 0.0;
-                    line_count += 1;
-                    baseline_y += line_height;
+                    if ch.is_whitespace() {
+                        width = width.max(pen_x);
+                        pen_x = 0.0;
+                        line_count += 1;
+                        baseline_y += line_height;
+                        line_start_cluster = clusters.len() + 1;
+                        last_break = None;
+
+                        let glyph_start = glyphs.len();
+                        clusters.push(ShapedCluster {
+                            source: (source_offset + char_byte_offset) as u32
+                                ..(source_offset + char_byte_offset + ch.len_utf8()) as u32,
+                            glyphs: glyph_start as u32..glyph_start as u32,
+                        });
+                        prev_char = Some(ch);
+                        continue;
+                    } else if let Some(candidate) = last_break {
+                        if candidate.cluster_idx > line_start_cluster {
+                            width = width.max(candidate.pen_x);
+                            line_count += 1;
+                            baseline_y += line_height;
+                            let shift_x = candidate.pen_x;
+
+                            for glyph in &mut glyphs[candidate.glyph_idx..] {
+                                glyph.x -= shift_x;
+                                glyph.y = baseline_y;
+                            }
+
+                            pen_x -= shift_x;
+                            line_start_cluster = candidate.cluster_idx;
+                            last_break = None;
+                        } else {
+                            width = width.max(pen_x);
+                            pen_x = 0.0;
+                            line_count += 1;
+                            baseline_y += line_height;
+                            line_start_cluster = clusters.len();
+                            last_break = None;
+                        }
+                    } else {
+                        width = width.max(pen_x);
+                        pen_x = 0.0;
+                        line_count += 1;
+                        baseline_y += line_height;
+                        line_start_cluster = clusters.len();
+                        last_break = None;
+                    }
                 }
 
                 let glyph_start = glyphs.len();
-                if wrapped && ch.is_whitespace() {
-                    clusters.push(ShapedCluster {
-                        source: (source_offset + char_byte_offset) as u32
-                            ..(source_offset + char_byte_offset + ch.len_utf8()) as u32,
-                        glyphs: glyph_start as u32..glyph_start as u32,
-                    });
-                    continue;
-                }
-
                 if let Some(rect) = metric.rect {
                     glyphs.push(PositionedGlyph {
                         rect,
@@ -121,6 +176,7 @@ impl TextRenderer {
                         ..(source_offset + char_byte_offset + ch.len_utf8()) as u32,
                     glyphs: glyph_start as u32..glyphs.len() as u32,
                 });
+                prev_char = Some(ch);
             }
 
             width = width.max(pen_x);
@@ -441,5 +497,82 @@ mod tests {
         assert!(wrapped.dimensions.height > unwrapped.dimensions.height);
         assert!(wrapped.dimensions.width < unwrapped.dimensions.width);
         assert_eq!(wrapped.clusters.len(), unwrapped.clusters.len());
+    }
+
+    #[test]
+    #[cfg(feature = "font-rasterize")]
+    fn closing_punctuation_does_not_start_a_line() {
+        let mut renderer = TextRenderer::new();
+        let font = test_font();
+        // ProggyClean uses fallback '?' for CJK chars, so each CJK char has identical advance.
+        // "这是一句话" (5 chars). Each char advance = A.
+        // Width for 5.5 chars: fits 5 chars, but cannot fit the 6th char '。'.
+        let char_advance = font.data.get_glyph('?').unwrap().advance;
+        let max_width = char_advance * 5.5;
+
+        let shaped = renderer.shape(&font, "这是一句话。然后继续。", Some(max_width));
+
+        // The 5th char ('话', glyph 4) and 6th char ('。', glyph 5) should be pushed down to line 2 together.
+        // Glyphs 0..4 ("这是一句") should be on line 1 (y == 0).
+        // Glyphs 4 ("话") and 5 ("。") should be on line 2 (y > 0).
+        let line_height = font.data.ascent + font.data.descent + font.data.line_gap;
+        assert_eq!(shaped.glyphs[0].y, 0.0);
+        assert_eq!(shaped.glyphs[1].y, 0.0);
+        assert_eq!(shaped.glyphs[2].y, 0.0);
+        assert_eq!(shaped.glyphs[3].y, 0.0);
+        assert_eq!(shaped.glyphs[4].y, line_height);
+        assert_eq!(shaped.glyphs[5].y, line_height);
+        // '话' is at the start of line 2 (x == 0).
+        assert_eq!(shaped.glyphs[4].x, 0.0);
+        // '。' follows '话' on line 2.
+        assert_eq!(shaped.glyphs[5].x, char_advance);
+    }
+
+    #[test]
+    #[cfg(feature = "font-rasterize")]
+    fn opening_punctuation_does_not_end_a_line() {
+        let mut renderer = TextRenderer::new();
+        let font = test_font();
+        let char_advance = font.data.get_glyph('?').unwrap().advance;
+        // Max width fits 5 chars.
+        // "这是一句（话）": 4 chars + '（' = 5 chars on line 1, but '话' overflows.
+        // Since '（' cannot end a line, '（' must be pushed down to line 2 along with '话'.
+        let max_width = char_advance * 5.5;
+
+        let shaped = renderer.shape(&font, "这是一句（话）", Some(max_width));
+        let line_height = font.data.ascent + font.data.descent + font.data.line_gap;
+
+        // Line 1: "这是一句" (glyphs 0..4 at y == 0)
+        assert_eq!(shaped.glyphs[0].y, 0.0);
+        assert_eq!(shaped.glyphs[1].y, 0.0);
+        assert_eq!(shaped.glyphs[2].y, 0.0);
+        assert_eq!(shaped.glyphs[3].y, 0.0);
+        // Line 2: "（话）" (glyphs 4..7 at y == line_height)
+        assert_eq!(shaped.glyphs[4].y, line_height);
+        assert_eq!(shaped.glyphs[4].x, 0.0); // '（' pushed to start of line 2
+    }
+
+    #[test]
+    #[cfg(feature = "font-rasterize")]
+    fn english_word_wrapping_prefers_space() {
+        let mut renderer = TextRenderer::new();
+        let font = test_font();
+        let char_advance = font.data.get_glyph('a').unwrap().advance;
+        // "Hello world."
+        // "Hello " = 6 chars. Width fits 8 chars.
+        // Without word wrap, "Hello wo" would be on line 1 and "rld." on line 2.
+        // With word wrap, "Hello " is on line 1 and "world." is on line 2.
+        let max_width = char_advance * 8.0;
+
+        let shaped = renderer.shape(&font, "Hello world.", Some(max_width));
+        let line_height = font.data.ascent + font.data.descent + font.data.line_gap;
+
+        // 'H','e','l','l','o' are on line 1 (y == 0)
+        for i in 0..5 {
+            assert_eq!(shaped.glyphs[i].y, 0.0);
+        }
+        // 'w' (glyph 5, since space has no glyph) is on line 2 (y == line_height) at x == 0
+        assert_eq!(shaped.glyphs[5].y, line_height);
+        assert_eq!(shaped.glyphs[5].x, 0.0);
     }
 }

@@ -14,6 +14,7 @@ use crate::{
 };
 
 pub mod font_atlas;
+pub mod line_break;
 #[cfg(feature = "font-rasterize")]
 pub(crate) mod rasterizer;
 pub mod renderer;
@@ -413,8 +414,13 @@ impl Font {
             let glyph_id = font.charmap().map(ch);
             let advance = glyph_metrics.advance_width(glyph_id);
             let code = ch as u32;
+            let rect = if ch == ' ' {
+                None
+            } else {
+                Some(crate::math::Rect::new(0.0, 0.0, advance.max(1.0), font_metrics.ascent))
+            };
             ascii_glyphs[(code - 32) as usize] = Some(GlyphMetric {
-                rect: None,
+                rect,
                 left: 0,
                 top: 0,
                 advance,
@@ -917,22 +923,28 @@ pub fn wrap_text(
     font_scale: f32,
     maximum_line_length: f32,
 ) -> String {
-    let context = get_context();
+    if !maximum_line_length.is_finite() || maximum_line_length <= 0.0 {
+        return text.to_string();
+    }
     let font = font
         .cloned()
-        .unwrap_or_else(|| context.fonts_storage.default_font.clone());
+        .unwrap_or_else(|| get_context().fonts_storage.default_font.clone());
     let fallback = font.data.get_glyph('?');
     let scale = font_size as f32 / font.data.base_size * font_scale;
-    let mut output = String::with_capacity(text.len());
-    let mut line = String::new();
+    let mut output = String::with_capacity(text.len() + text.len() / 20 + 8);
+    let mut line_chars: Vec<(char, f32)> = Vec::new();
     let mut line_width = 0.0;
+    let mut last_break: Option<(usize, f32)> = None;
 
     for character in text.chars() {
         if character == '\n' {
-            output.push_str(&line);
+            for (c, _) in &line_chars {
+                output.push(*c);
+            }
             output.push('\n');
-            line.clear();
+            line_chars.clear();
             line_width = 0.0;
+            last_break = None;
             continue;
         }
 
@@ -941,16 +953,59 @@ pub fn wrap_text(
             .get_glyph(character)
             .or(fallback)
             .map_or(0.0, |metric| metric.advance * scale);
-        if !line.is_empty() && line_width + advance > maximum_line_length {
-            output.push_str(&line);
-            output.push('\n');
-            line.clear();
-            line_width = 0.0;
+
+        if let Some(&(prev, _)) = line_chars.last() {
+            if line_break::can_break_between(prev, character) {
+                last_break = Some((line_chars.len(), line_width));
+            }
         }
-        line.push(character);
+
+        if !line_chars.is_empty() && line_width + advance > maximum_line_length {
+            if character.is_whitespace() {
+                for (c, _) in &line_chars {
+                    output.push(*c);
+                }
+                output.push('\n');
+                line_chars.clear();
+                line_width = 0.0;
+                last_break = None;
+                continue;
+            } else if let Some((break_idx, break_width)) = last_break {
+                if break_idx > 0 {
+                    for (c, _) in &line_chars[..break_idx] {
+                        output.push(*c);
+                    }
+                    output.push('\n');
+                    line_chars.drain(..break_idx);
+                    line_width -= break_width;
+                    last_break = None;
+                } else {
+                    for (c, _) in &line_chars {
+                        output.push(*c);
+                    }
+                    output.push('\n');
+                    line_chars.clear();
+                    line_width = 0.0;
+                    last_break = None;
+                }
+            } else {
+                for (c, _) in &line_chars {
+                    output.push(*c);
+                }
+                output.push('\n');
+                line_chars.clear();
+                line_width = 0.0;
+                last_break = None;
+            }
+        }
+
+        line_chars.push((character, advance));
         line_width += advance;
     }
-    output.push_str(&line);
+
+    for (c, _) in &line_chars {
+        output.push(*c);
+    }
     output
 }
 
@@ -1031,3 +1086,99 @@ fn require_font_send() {
     fn require_send<T: Send>() {}
     require_send::<Font>();
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "font-rasterize")]
+    fn wrap_text_respects_closing_punctuation() {
+        let font = Font::load_for_test(include_bytes!("../../assets/fonts/ProggyClean.ttf")).unwrap();
+        let fallback_advance = font.data.get_glyph('?').unwrap().advance;
+        let scale = 20.0 / font.data.base_size;
+        let char_advance = fallback_advance * scale;
+
+        // Line fits 5 chars (char_advance * 5.5).
+        // Text: "这是一句话。然后继续。"
+        // "这是一句" fits on line 1, "话。" pushed to line 2.
+        let wrapped = wrap_text(
+            "这是一句话。然后继续。",
+            Some(&font),
+            20,
+            1.0,
+            char_advance * 5.5,
+        );
+
+        let lines: Vec<&str> = wrapped.lines().collect();
+        assert_eq!(lines[0], "这是一句");
+        assert_eq!(lines[1], "话。然后继");
+        assert_eq!(lines[2], "续。");
+    }
+
+    #[test]
+    #[cfg(feature = "font-rasterize")]
+    fn wrap_text_preserves_explicit_newlines() {
+        let font = Font::load_for_test(include_bytes!("../../assets/fonts/ProggyClean.ttf")).unwrap();
+        let wrapped = wrap_text(
+            "Hello\nWorld",
+            Some(&font),
+            20,
+            1.0,
+            1000.0,
+        );
+        let lines: Vec<&str> = wrapped.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0], "Hello");
+        assert_eq!(lines[1], "World");
+    }
+
+    #[test]
+    #[cfg(feature = "font-rasterize")]
+    fn wrap_text_handles_invalid_or_zero_max_length() {
+        let font = Font::load_for_test(include_bytes!("../../assets/fonts/ProggyClean.ttf")).unwrap();
+        assert_eq!(wrap_text("Hello World", Some(&font), 20, 1.0, 0.0), "Hello World");
+        assert_eq!(wrap_text("Hello World", Some(&font), 20, 1.0, -50.0), "Hello World");
+        assert_eq!(wrap_text("Hello World", Some(&font), 20, 1.0, f32::NAN), "Hello World");
+    }
+
+    #[test]
+    #[cfg(feature = "font-rasterize")]
+    fn wrap_text_english_word_wrapping_prefers_space() {
+        let font = Font::load_for_test(include_bytes!("../../assets/fonts/ProggyClean.ttf")).unwrap();
+        let char_advance = font.data.get_glyph('a').unwrap().advance * (20.0 / font.data.base_size);
+        let wrapped = wrap_text(
+            "Hello world.",
+            Some(&font),
+            20,
+            1.0,
+            char_advance * 8.0,
+        );
+        let lines: Vec<&str> = wrapped.lines().collect();
+        assert_eq!(lines[0], "Hello ");
+        assert_eq!(lines[1], "world.");
+    }
+
+    #[test]
+    #[cfg(feature = "font-rasterize")]
+    fn wrap_text_consecutive_punctuation() {
+        let font = Font::load_for_test(include_bytes!("../../assets/fonts/ProggyClean.ttf")).unwrap();
+        let fallback_advance = font.data.get_glyph('?').unwrap().advance;
+        let scale = 20.0 / font.data.base_size;
+        let char_advance = fallback_advance * scale;
+
+        // "这是真的吗？！" -> 6 chars. Width fits 5.5 chars.
+        // "吗？！" should wrap together to line 2.
+        let wrapped = wrap_text(
+            "这是真的吗？！",
+            Some(&font),
+            20,
+            1.0,
+            char_advance * 5.5,
+        );
+        let lines: Vec<&str> = wrapped.lines().collect();
+        assert_eq!(lines[0], "这是真的");
+        assert_eq!(lines[1], "吗？！");
+    }
+}
+
