@@ -633,9 +633,10 @@ pub struct QuadGl {
     pub max_vertices: usize,
     pub max_indices: usize,
 
+    #[cfg(not(feature = "3d"))]
     pub batch_vertex_buffer: Vec<Vertex>,
     #[cfg(feature = "3d")]
-    packed_vertex_buffer: Vec<PackedVertex>,
+    pub batch_vertex_buffer: Vec<PackedVertex>,
     pub batch_index_buffer: Vec<u16>,
     pub batch_uniform_buffer: Vec<u8>,
 }
@@ -668,8 +669,6 @@ impl QuadGl {
 
             white_texture,
             batch_vertex_buffer: Vec::with_capacity(max_vertices),
-            #[cfg(feature = "3d")]
-            packed_vertex_buffer: Vec::with_capacity(max_vertices),
             batch_index_buffer: Vec::with_capacity(max_indices),
             batch_uniform_buffer: Vec::new(),
             max_vertices,
@@ -808,22 +807,6 @@ impl QuadGl {
                 ctx.begin_default_pass(PassAction::Nothing);
             }
 
-            #[cfg(feature = "3d")]
-            {
-                self.packed_vertex_buffer.clear();
-                self.packed_vertex_buffer.extend(
-                    self.batch_vertex_buffer
-                        [dc.vertices_start..(dc.vertices_start + dc.vertices_count)]
-                        .iter()
-                        .map(PackedVertex::from),
-                );
-            }
-            #[cfg(feature = "3d")]
-            ctx.buffer_update(
-                bindings.vertex_buffer,
-                BufferSource::slice(&self.packed_vertex_buffer),
-            );
-            #[cfg(not(feature = "3d"))]
             ctx.buffer_update(
                 bindings.vertex_buffer,
                 BufferSource::slice(
@@ -1033,6 +1016,10 @@ impl QuadGl {
         };
         let dc = &mut self.draw_calls[self.draw_calls_count - 1];
 
+        #[cfg(feature = "3d")]
+        self.batch_vertex_buffer
+            .extend(vertices.iter().map(PackedVertex::from));
+        #[cfg(not(feature = "3d"))]
         self.batch_vertex_buffer.extend(vertices);
         self.batch_index_buffer
             .extend(indices.iter().map(|x| *x + dc.vertices_count as u16));

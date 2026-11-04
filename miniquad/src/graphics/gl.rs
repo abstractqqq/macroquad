@@ -577,6 +577,9 @@ impl GlContext {
                     cur_program: None,
                     cur_pass: None,
                     scissor_test: false,
+                    cur_fb: None,
+                    viewport: None,
+                    scissor: None,
                     depth_write: false,
                     depth_test: None,
                     front_face_order: FrontFaceOrder::CounterClockwise,
@@ -1195,6 +1198,7 @@ impl RenderingBackend for GlContext {
             }
             glBindFramebuffer(GL_FRAMEBUFFER, self.default_framebuffer);
         }
+        self.cache.cur_fb = Some(self.default_framebuffer);
         let pass = RenderPassInternal {
             gl_fb,
             color_textures: color_img.to_vec(),
@@ -1503,16 +1507,22 @@ impl RenderingBackend for GlContext {
     /// Set a new viewport rectangle.
     /// Should be applied after begin_pass.
     fn apply_viewport(&mut self, x: i32, y: i32, w: i32, h: i32) {
-        unsafe {
-            glViewport(x, y, w, h);
+        if self.cache.viewport != Some((x, y, w, h)) {
+            self.cache.viewport = Some((x, y, w, h));
+            unsafe {
+                glViewport(x, y, w, h);
+            }
         }
     }
 
     /// Set a new scissor rectangle.
     /// Should be applied after begin_pass.
     fn apply_scissor_rect(&mut self, x: i32, y: i32, w: i32, h: i32) {
-        unsafe {
-            glScissor(x, y, w, h);
+        if self.cache.scissor != Some((x, y, w, h)) {
+            self.cache.scissor = Some((x, y, w, h));
+            unsafe {
+                glScissor(x, y, w, h);
+            }
         }
     }
 
@@ -1732,11 +1742,12 @@ impl RenderingBackend for GlContext {
                 )
             }
         };
-        unsafe {
-            glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-            glViewport(0, 0, w, h);
-            glScissor(0, 0, w, h);
+        if self.cache.cur_fb != Some(framebuffer) {
+            unsafe { glBindFramebuffer(GL_FRAMEBUFFER, framebuffer) };
+            self.cache.cur_fb = Some(framebuffer);
         }
+        self.apply_viewport(0, 0, w, h);
+        self.apply_scissor_rect(0, 0, w, h);
         match action {
             PassAction::Nothing => {}
             PassAction::Clear {
@@ -1754,6 +1765,7 @@ impl RenderingBackend for GlContext {
             if let Some(pass) = self.cache.cur_pass.take() {
                 let pass = &self.passes[pass.0];
                 if let Some(resolves) = &pass.resolves {
+                    self.cache.cur_fb = None;
                     glBindFramebuffer(GL_READ_FRAMEBUFFER, pass.gl_fb);
                     for (i, (resolve_fb, resolve_img)) in resolves.iter().enumerate() {
                         let texture = self.textures.get(*resolve_img);
@@ -1776,7 +1788,10 @@ impl RenderingBackend for GlContext {
                     }
                 }
             }
-            glBindFramebuffer(GL_FRAMEBUFFER, self.default_framebuffer);
+            if self.cache.cur_fb != Some(self.default_framebuffer) {
+                glBindFramebuffer(GL_FRAMEBUFFER, self.default_framebuffer);
+                self.cache.cur_fb = Some(self.default_framebuffer);
+            }
 
             // On Android when resizing the screen, visual tearing may occur
             // on some devices since clearing the screen is clipped by scissor.
