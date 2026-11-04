@@ -607,6 +607,9 @@ impl Default for TextLayoutDrawParams {
 pub struct TextLayout {
     pub font: Font,
     pub shaped: Arc<renderer::ShapedText>,
+    /// Per-cluster color overrides. Empty (not one entry per cluster) when the layout was
+    /// prepared without color spans; otherwise one entry per cluster. Use
+    /// [`TextLayout::set_cluster_color`] to modify instead of indexing directly.
     pub cluster_colors: Box<[Option<Color>]>,
     pub dimensions: TextDimensions,
     pub font_size: f32,
@@ -640,6 +643,20 @@ impl TextLayout {
             .clusters
             .get(index)
             .map(|cluster| cluster.source.start as usize..cluster.source.end as usize)
+    }
+
+    /// Overrides the color of the clusters in `range` (clamped to the cluster count),
+    /// allocating the per-cluster color table if the layout had none.
+    pub fn set_cluster_color(&mut self, range: Range<usize>, color: Color) {
+        let count = self.cluster_count();
+        if self.cluster_colors.is_empty() {
+            self.cluster_colors = vec![None; count].into_boxed_slice();
+        }
+        let end = range.end.min(count);
+        let start = range.start.min(end);
+        for slot in &mut self.cluster_colors[start..end] {
+            *slot = Some(color);
+        }
     }
 }
 
