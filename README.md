@@ -102,6 +102,30 @@ The main intentional differences from upstream Macroquad are:
   including their supporting handle and storage types.
 - **Native-only for now:** RayQuad currently targets desktop and mobile platforms.
 
+- **Integrated Miniquad fork:** Miniquad lives in the workspace as the `miniquad/`
+  subcrate (`publish = false`) instead of being pulled from crates.io, so the
+  window/GL layer can be optimized together with RayQuad.
+  - `miniquad::Context` is a concrete type (`GlContext`, or an enum with Metal on
+    Apple targets) instead of `Box<dyn RenderingBackend>`, and `miniquad::start` is
+    generic over the `EventHandler`, so the frame loop is statically dispatched.
+  - Buffers, shaders, pipelines and render passes use a `Vec` plus free-list
+    `ResourceManager` rather than a `HashMap`. Freed ids are reused, so a stale
+    handle can alias a newer resource instead of panicking.
+  - The GL backend caches pipeline, program, depth, front-face, scissor, active
+    texture slot, framebuffer, viewport and scissor rect, and skips redundant calls.
+    Sampler uniforms are bound once at link time, and per-frame buffer/texture
+    unbinding was removed. Shader objects and framebuffers are now released, and
+    the readback FBO is reused.
+  - With the `3d` feature, vertices are packed into `PackedVertex` once while
+    batching rather than again for every draw call before upload.
+  - Linux input caches keycode and XKB lookups, and the Wayland timerfd leak is fixed.
+  - On a synthetic Linux/Wayland scene (about 15k sprites, 3k rects, 150 text lines)
+    mean frame time dropped roughly 19% versus crates.io Miniquad 0.4.11. This was
+    not measured on other platforms.
+  - Not yet addressed: the Metal backend's per-frame `waitUntilCompleted` stall and
+    buffer leaks, Android asset-load leaks and background busy-wait, and the global
+    `NATIVE_DISPLAY` mutex. See `issues.md` and `miniquad/issues.md`.
+
 
 
 
