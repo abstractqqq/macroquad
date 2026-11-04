@@ -416,9 +416,8 @@ impl MetalContext {
     }
 }
 
-static METAL_INFO: ContextInfo = ContextInfo {
+const METAL_INFO: ContextInfo = ContextInfo {
     backend: Backend::Metal,
-    gl_version_string: String::new(),
     glsl_support: GlslSupport {
         v130: false,
         v150: false,

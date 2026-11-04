@@ -10,8 +10,8 @@ use crate::texture::Image;
 
 pub(crate) struct RasterizedGlyph {
     pub(crate) image: Image,
-    pub(crate) left: i32,
-    pub(crate) top: i32,
+    pub(crate) left: i16,
+    pub(crate) top: i16,
 }
 
 pub(crate) struct Rasterizer {
@@ -58,8 +58,8 @@ impl Rasterizer {
                 width,
                 height,
             },
-            left: rendered.placement.left,
-            top: rendered.placement.top,
+            left: rendered.placement.left as i16,
+            top: rendered.placement.top as i16,
         })
     }
 }

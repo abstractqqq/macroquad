@@ -46,24 +46,24 @@ pub enum DrawMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct GlPipeline(pub usize);
+pub struct GlPipeline(pub u8);
 
 pub struct DrawCall {
-    pub vertices_count: usize,
-    pub indices_count: usize,
-    pub vertices_start: usize,
-    pub indices_start: usize,
+    pub model: glam::Mat4,
 
+    pub vertices_count: u32,
+    pub indices_count: u32,
+    pub vertices_start: u32,
+    pub indices_start: u32,
+
+    pub uniforms: Range<u32>,
     pub clip: Option<(i32, i32, i32, i32)>,
     pub viewport: Option<(i32, i32, i32, i32)>,
     pub texture: Option<miniquad::TextureId>,
-
-    pub model: glam::Mat4,
+    pub render_pass: Option<RenderPass>,
 
     pub draw_mode: DrawMode,
     pub pipeline: GlPipeline,
-    pub uniforms: Range<u32>,
-    pub render_pass: Option<RenderPass>,
 }
 
 impl DrawCall {
@@ -594,7 +594,7 @@ impl PipelinesStorage {
             uniforms_data: vec![0; uniforms_data_len].into_boxed_slice(),
             textures,
         });
-        GlPipeline(id)
+        GlPipeline(id as u8)
     }
 
     const fn get(&self, draw_mode: DrawMode, depth_enabled: bool) -> GlPipeline {
@@ -607,11 +607,11 @@ impl PipelinesStorage {
     }
 
     fn get_quad_pipeline_mut(&mut self, pip: GlPipeline) -> &mut PipelineExt {
-        self.pipelines[pip.0].as_mut().unwrap()
+        self.pipelines[pip.0 as usize].as_mut().unwrap()
     }
 
     fn delete_pipeline(&mut self, pip: GlPipeline) {
-        self.pipelines[pip.0] = None;
+        self.pipelines[pip.0 as usize] = None;
     }
 }
 
@@ -810,15 +810,15 @@ impl QuadGl {
             ctx.buffer_update(
                 bindings.vertex_buffer,
                 BufferSource::slice(
-                    &self.batch_vertex_buffer
-                        [dc.vertices_start..(dc.vertices_start + dc.vertices_count)],
+                    &self.batch_vertex_buffer[dc.vertices_start as usize
+                        ..(dc.vertices_start + dc.vertices_count) as usize],
                 ),
             );
             ctx.buffer_update(
                 bindings.index_buffer,
                 BufferSource::slice(
                     &self.batch_index_buffer
-                        [dc.indices_start..(dc.indices_start + dc.indices_count)],
+                        [dc.indices_start as usize..(dc.indices_start + dc.indices_count) as usize],
                 ),
             );
 
@@ -976,8 +976,8 @@ impl QuadGl {
                 || draw_call.pipeline != pip
                 || draw_call.render_pass != self.state.render_pass
                 || draw_call.draw_mode != self.state.draw_mode
-                || draw_call.vertices_count >= self.max_vertices - vertices.len()
-                || draw_call.indices_count >= self.max_indices - indices.len()
+                || draw_call.vertices_count as usize >= self.max_vertices - vertices.len()
+                || draw_call.indices_count as usize >= self.max_indices - indices.len()
                 || self.state.break_batching
         }) {
             let uniforms = self.state.pipeline.map_or(0..0, |pipeline| {
@@ -1008,8 +1008,10 @@ impl QuadGl {
             self.draw_calls[self.draw_calls_count].model = self.state.model();
             self.draw_calls[self.draw_calls_count].pipeline = pip;
             self.draw_calls[self.draw_calls_count].render_pass = self.state.render_pass;
-            self.draw_calls[self.draw_calls_count].indices_start = self.batch_index_buffer.len();
-            self.draw_calls[self.draw_calls_count].vertices_start = self.batch_vertex_buffer.len();
+            self.draw_calls[self.draw_calls_count].indices_start =
+                self.batch_index_buffer.len() as u32;
+            self.draw_calls[self.draw_calls_count].vertices_start =
+                self.batch_vertex_buffer.len() as u32;
 
             self.draw_calls_count += 1;
             self.state.break_batching = false;
@@ -1024,8 +1026,8 @@ impl QuadGl {
         self.batch_index_buffer
             .extend(indices.iter().map(|x| *x + dc.vertices_count as u16));
 
-        dc.vertices_count += vertices.len();
-        dc.indices_count += indices.len();
+        dc.vertices_count += vertices.len() as u32;
+        dc.indices_count += indices.len() as u32;
 
         dc.texture = self.state.texture;
     }

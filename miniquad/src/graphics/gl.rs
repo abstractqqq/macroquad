@@ -41,8 +41,8 @@ struct ShaderUniform {
 
 struct ShaderInternal {
     program: GLuint,
-    images: Vec<ShaderImage>,
-    uniforms: Vec<ShaderUniform>,
+    images: Box<[ShaderImage]>,
+    uniforms: Box<[ShaderUniform]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -469,7 +469,7 @@ impl Texture {
 }
 
 pub(crate) struct PipelineInternal {
-    layout: Vec<Option<VertexAttributeInternal>>,
+    layout: Box<[Option<VertexAttributeInternal>]>,
     shader: ShaderId,
     params: PipelineParams,
 }
@@ -493,8 +493,8 @@ fn get_uniform_location(program: GLuint, name: &str) -> Option<i32> {
 
 pub(crate) struct RenderPassInternal {
     gl_fb: GLuint,
-    color_textures: Vec<TextureId>,
-    resolves: Option<Vec<(u32, TextureId)>>,
+    color_textures: Box<[TextureId]>,
+    resolves: Box<[(u32, TextureId)]>,
     depth_texture: Option<TextureId>,
 }
 
@@ -652,7 +652,7 @@ fn load_shader_internal(
                 glUniform1i(gl_loc, n as i32);
             }
             ShaderImage { gl_loc }
-        }).collect();
+        }).collect::<Vec<_>>().into_boxed_slice();
 
         #[rustfmt::skip]
         let uniforms = meta.uniforms.uniforms.iter().scan(0, |offset, uniform| {
@@ -663,7 +663,7 @@ fn load_shader_internal(
             };
             *offset += uniform.uniform_type.size() * uniform.array_count;
             Some(res)
-        }).collect();
+        }).collect::<Vec<_>>().into_boxed_slice();
 
         Ok(ShaderInternal {
             program,
@@ -849,10 +849,13 @@ impl GlContext {
 #[allow(clippy::field_reassign_with_default)]
 fn gl_info() -> ContextInfo {
     let version_string = unsafe { glGetString(super::gl::GL_VERSION) };
-    let gl_version_string = unsafe { std::ffi::CStr::from_ptr(version_string as _) }
-        .to_str()
-        .unwrap()
-        .to_string();
+    let gl_version_string = if version_string.is_null() {
+        ""
+    } else {
+        unsafe { std::ffi::CStr::from_ptr(version_string as _) }
+            .to_str()
+            .unwrap_or("")
+    };
     //let gles2 = !gles3 && gl_version_string.contains("OpenGL ES");
 
     let gl2 = gl_version_string.is_empty()
@@ -905,7 +908,6 @@ fn gl_info() -> ContextInfo {
 
     ContextInfo {
         backend: Backend::OpenGl,
-        gl_version_string,
         glsl_support,
         features,
     }
@@ -1119,7 +1121,7 @@ impl RenderingBackend for GlContext {
         }
         let mut gl_fb = 0;
 
-        let mut resolves = None;
+        let mut resolves = Vec::new();
         unsafe {
             glGenFramebuffers(1, &mut gl_fb as *mut _);
             glBindFramebuffer(GL_FRAMEBUFFER, gl_fb);
@@ -1175,8 +1177,7 @@ impl RenderingBackend for GlContext {
             }
 
             if let Some(resolve_img) = resolve_img {
-                resolves = Some(vec![]);
-                let resolves = resolves.as_mut().unwrap();
+                resolves.reserve_exact(resolve_img.len());
                 for (i, resolve_img) in resolve_img.iter().enumerate() {
                     let mut resolve_fb = 0;
                     glGenFramebuffers(1, &mut resolve_fb as *mut _);
@@ -1201,8 +1202,8 @@ impl RenderingBackend for GlContext {
         self.cache.cur_fb = Some(self.default_framebuffer);
         let pass = RenderPassInternal {
             gl_fb,
-            color_textures: color_img.to_vec(),
-            resolves,
+            color_textures: color_img.into(),
+            resolves: resolves.into_boxed_slice(),
             depth_texture: depth_img,
         };
 
@@ -1224,11 +1225,9 @@ impl RenderingBackend for GlContext {
         for color_texture in &render_pass.color_textures {
             self.delete_texture(*color_texture);
         }
-        if let Some(resolves) = render_pass.resolves {
-            for (fb, texture) in resolves {
-                unsafe { glDeleteFramebuffers(1, &fb as *const _) }
-                self.delete_texture(texture);
-            }
+        for (fb, texture) in render_pass.resolves.iter().copied() {
+            unsafe { glDeleteFramebuffers(1, &fb as *const _) }
+            self.delete_texture(texture);
         }
         if let Some(depth_texture) = render_pass.depth_texture {
             self.delete_texture(depth_texture);
@@ -1245,7 +1244,7 @@ impl RenderingBackend for GlContext {
         #[derive(Clone, Copy, Default)]
         struct BufferCacheData {
             stride: i32,
-            offset: i64,
+            offset: u32,
         }
 
         let mut buffer_cache: Vec<BufferCacheData> =
@@ -1281,7 +1280,8 @@ impl RenderingBackend for GlContext {
             })
             .sum();
 
-        let mut vertex_layout: Vec<Option<VertexAttributeInternal>> = vec![None; attributes_len];
+        let mut vertex_layout: Box<[Option<VertexAttributeInternal>]> =
+            vec![None; attributes_len].into_boxed_slice();
 
         for VertexAttribute {
             name,
@@ -1301,7 +1301,7 @@ impl RenderingBackend for GlContext {
             let divisor = if layout.step_func == VertexStep::PerVertex {
                 0
             } else {
-                layout.step_rate
+                layout.step_rate as u32
             };
 
             let mut attributes_count: usize = 1;
@@ -1317,11 +1317,11 @@ impl RenderingBackend for GlContext {
 
                     let attr = VertexAttributeInternal {
                         attr_loc,
-                        size: format.components(),
+                        size: format.components() as u8,
                         type_: format.type_(),
                         offset: buffer_data.offset,
-                        stride: buffer_data.stride,
-                        buffer_index: *buffer_index,
+                        stride: buffer_data.stride as u8,
+                        buffer_index: *buffer_index as u16,
                         divisor,
                         gl_pass_as_float: *gl_pass_as_float,
                     };
@@ -1334,7 +1334,7 @@ impl RenderingBackend for GlContext {
                     );
                     vertex_layout[attr_loc as usize] = Some(attr);
                 }
-                buffer_data.offset += format.size_bytes() as i64
+                buffer_data.offset += format.size_bytes() as u32;
             }
         }
 
@@ -1563,11 +1563,12 @@ impl RenderingBackend for GlContext {
             let pip_attribute = pip.layout.get(attr_index).copied();
 
             if let Some(Some(attribute)) = pip_attribute {
+                let buffer_index = attribute.buffer_index as usize;
                 assert!(
-                    attribute.buffer_index < vertex_buffers.len(),
+                    buffer_index < vertex_buffers.len(),
                     "Attribute index outside of vertex_buffers length"
                 );
-                let vb = vertex_buffers[attribute.buffer_index];
+                let vb = vertex_buffers[buffer_index];
                 let vb = self.buffers[vb.0];
 
                 if cached_attr.map_or(true, |cached_attr| {
@@ -1584,23 +1585,23 @@ impl RenderingBackend for GlContext {
                             {
                                 glVertexAttribIPointer(
                                     attr_index as GLuint,
-                                    attribute.size,
+                                    attribute.size as i32,
                                     attribute.type_,
-                                    attribute.stride,
-                                    attribute.offset as *mut _,
+                                    attribute.stride as i32,
+                                    attribute.offset as usize as *mut _,
                                 )
                             }
                             _ => glVertexAttribPointer(
                                 attr_index as GLuint,
-                                attribute.size,
+                                attribute.size as i32,
                                 attribute.type_,
                                 GL_FALSE as u8,
-                                attribute.stride,
-                                attribute.offset as *mut _,
+                                attribute.stride as i32,
+                                attribute.offset as usize as *mut _,
                             ),
                         }
                         if self.info.features.instancing {
-                            glVertexAttribDivisor(attr_index as GLuint, attribute.divisor as u32);
+                            glVertexAttribDivisor(attr_index as GLuint, attribute.divisor);
                         }
                         glEnableVertexAttribArray(attr_index as GLuint);
                     };
@@ -1764,10 +1765,10 @@ impl RenderingBackend for GlContext {
         unsafe {
             if let Some(pass) = self.cache.cur_pass.take() {
                 let pass = &self.passes[pass.0];
-                if let Some(resolves) = &pass.resolves {
+                if !pass.resolves.is_empty() {
                     self.cache.cur_fb = None;
                     glBindFramebuffer(GL_READ_FRAMEBUFFER, pass.gl_fb);
-                    for (i, (resolve_fb, resolve_img)) in resolves.iter().enumerate() {
+                    for (i, (resolve_fb, resolve_img)) in pass.resolves.iter().enumerate() {
                         let texture = self.textures.get(*resolve_img);
                         let w = texture.params.width;
                         let h = texture.params.height;

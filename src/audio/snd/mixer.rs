@@ -8,7 +8,7 @@ use std::sync::mpsc;
 use std::sync::Arc;
 
 enum AudioMessage {
-    AddSound(NonZeroU32, Vec<f32>),
+    AddSound(NonZeroU32, Arc<[f32]>),
     Play(NonZeroU32, NonZeroU32, bool, f32),
     Stop(NonZeroU32),
     StopAll(NonZeroU32),
@@ -154,6 +154,7 @@ impl MixerControl {
     pub fn load(&self, data: &[u8]) -> Result<(NonZeroU32, f32), super::Error> {
         let samples = load_samples_from_file(data)?;
         let duration = (samples.len() / 2) as f32 / 44100.0;
+        let samples: Arc<[f32]> = samples.into();
 
         let sound_id = next_id(&self.sound_id);
 
@@ -256,7 +257,7 @@ impl Mixer {
                     if idx >= self.sounds.len() {
                         self.sounds.resize(idx + 1, None);
                     }
-                    self.sounds[idx] = Some(data.into());
+                    self.sounds[idx] = Some(data);
                 }
                 AudioMessage::Play(sound_id, play_id, looped, volume) => {
                     let idx = (sound_id.get() - 1) as usize;

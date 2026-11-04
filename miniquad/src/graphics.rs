@@ -572,7 +572,7 @@ pub struct RenderPass(usize);
 pub const MAX_VERTEX_ATTRIBUTES: usize = 16;
 pub const MAX_SHADERSTAGE_IMAGES: usize = 12;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Features {
     pub instancing: bool,
     /// Does current rendering backend support automatic resolve of
@@ -1053,7 +1053,7 @@ pub enum RawId {
 unsafe impl Send for RawId {}
 unsafe impl Sync for RawId {}
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default)]
 pub struct GlslSupport {
     pub v130: bool,
     pub v150: bool,
@@ -1069,11 +1069,9 @@ pub enum Backend {
     OpenGl,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct ContextInfo {
     pub backend: Backend,
-    /// GL_VERSION_STRING from OpenGL. Would be empty on metal.
-    pub gl_version_string: String,
     /// OpenGL provides an enumeration over GL_SHADING_LANGUAGE_VERSION,
     /// allowing to see which glsl versions are actually supported.
     /// Unfortunately, it only works on GL4.3+... and even there it is not quite correct.

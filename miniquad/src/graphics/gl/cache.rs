@@ -3,12 +3,12 @@ use crate::graphics::*;
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
 pub struct VertexAttributeInternal {
     pub attr_loc: GLuint,
-    pub size: i32,
     pub type_: GLuint,
-    pub offset: i64,
-    pub stride: i32,
-    pub buffer_index: usize,
-    pub divisor: i32,
+    pub offset: u32,
+    pub divisor: u32,
+    pub buffer_index: u16,
+    pub stride: u8,
+    pub size: u8,
     pub gl_pass_as_float: bool,
 }
 

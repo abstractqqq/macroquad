@@ -37,7 +37,24 @@ This document tracks the performance, memory, and architectural optimizations co
 - **Direct Desktop File Loading ([`src/file/mod.rs`](file:///home/tq/Projects/macroquad/src/file/mod.rs#L45-L56))**:
   - On desktop platforms (`linux`, `windows`, `macos`), `load_file` now calls `std::fs::read` directly without allocating `Arc<str>`, `Arc<Mutex<Option<...>>>`, and polling `FileLoadingFuture`.
 
-### 4. Previously Completed GL & Linux Backend Fixes in `miniquad`
+### 4. Memory Savings & Struct Layout Optimizations
+- **Discarded Unused Heap Strings (`ContextInfo::gl_version_string` & `GlxExtensions::extensions_string`)**:
+  - Removed the unused `gl_version_string: String` field from [`miniquad::ContextInfo`](file:///home/tq/Projects/macroquad/miniquad/src/graphics.rs#L1079-L1085), making `ContextInfo`, `Features`, and `GlslSupport` 9-byte `Copy` structs and borrowing the OpenGL version C-string as `&str` during context initialization in [`gl_info`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L533-L607).
+  - Removed the unused `extensions_string: String` field from [`GlxExtensions`](file:///home/tq/Projects/macroquad/miniquad/src/native/linux_x11/glx.rs#L197-L202), parsing extensions directly from a borrowed `&str`.
+- **Long-Lived Immutable Slices (`Vec<T>` $\rightarrow$ `Box<[T]>` / `Arc<[f32]>`)**:
+  - Converted `ShaderInternal::images` and `ShaderInternal::uniforms` ([`miniquad/src/graphics/gl.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L220-L224)), `PipelineInternal::layout` ([`miniquad/src/graphics/gl.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L486-L491)), and `RenderPassInternal::color_textures` / `resolves` ([`miniquad/src/graphics/gl.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L502-L508)) from `Vec<T>` / `Option<Vec<T>>` to `Box<[T]>`.
+  - Converted `ShapedText::glyphs` and `ShapedText::clusters` ([`src/text/renderer.rs`](file:///home/tq/Projects/macroquad/src/text/renderer.rs#L37-L44)) and `TextLayout::cluster_colors` ([`src/text/mod.rs`](file:///home/tq/Projects/macroquad/src/text/mod.rs#L747-L761)) to `Box<[T]>`, and skipped allocating `cluster_colors` (`Box::default()`) when `color_spans.is_empty()` ([`src/text/mod.rs`](file:///home/tq/Projects/macroquad/src/text/mod.rs#L844-L855)).
+  - Changed `AudioMessage::AddSound` ([`src/audio/snd/mixer.rs`](file:///home/tq/Projects/macroquad/src/audio/snd/mixer.rs#L11-L18)) from `Vec<f32>` to `Arc<[f32]>`, converting `samples.into()` on the loading thread ([`MixerControl::load`](file:///home/tq/Projects/macroquad/src/audio/snd/mixer.rs#L254-L260)) instead of allocating and copying on the real-time audio callback thread.
+- **Compacted `VertexAttributeInternal` (40 B $\rightarrow$ 24 B) ([`miniquad/src/graphics/gl/cache.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl/cache.rs#L3-L13))**:
+  - Narrowed `offset: u32`, `divisor: u32`, `buffer_index: u16`, `stride: u8`, and `size: u8`, shrinking `Option<CachedAttribute>` in `GlCache::attributes` and `PipelineInternal::layout` from 48 bytes to 28 bytes (42% reduction).
+- **Compacted `DrawCall` & `GlPipeline` (168 B $\rightarrow$ 128 B) ([`src/quad_gl.rs`](file:///home/tq/Projects/macroquad/src/quad_gl.rs#L48-L67))**:
+  - Changed `GlPipeline(pub usize)` to `GlPipeline(pub u8)`, moved `model: glam::Mat4` to the start of `DrawCall` to eliminate 16-byte alignment padding, and narrowed `vertices_count`, `indices_count`, `vertices_start`, and `indices_start` from `usize` to `u32` (fits in 2 CPU cache lines).
+- **Compacted `GlyphMetric` & `PositionedGlyph` ([`src/text/mod.rs`](file:///home/tq/Projects/macroquad/src/text/mod.rs#L86-L103), [`src/text/renderer.rs`](file:///home/tq/Projects/macroquad/src/text/renderer.rs#L10-L24))**:
+  - Narrowed `left` and `top` glyph bearing offsets from `i32` to `i16`, shrinking `GlyphMetric` from 20 bytes to 16 bytes and `PositionedGlyph` from 48 bytes to 40 bytes while preserving binary compatibility with `.rqfn` baked font assets.
+- **Zero-`Vec<char>` Shader Preprocessor ([`src/material/mod.rs`](file:///home/tq/Projects/macroquad/src/material/mod.rs#L168-L205))**:
+  - Rewrote `preprocess_shader` to operate directly on UTF-8 `&str` lines with a fast path returning `source.to_string()` when `!source.contains("#include")`.
+
+### 5. Previously Completed GL & Linux Backend Fixes in `miniquad`
 - **`ResourceManager<T>` generational/free-list storage** in [`miniquad/src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L29-L78) and [`miniquad/src/graphics/gl.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L515-L520) preventing unbounded vector growth and GPU resource leaks (`glDetachShader` + `glDeleteShader`, `glDeleteBuffers`, `glDeleteFramebuffers`, `glDeleteProgram`, cached `readback_fbo`).
 - **Linux X11 & Wayland**: `foldhash` cursor/touch maps, 256-entry X11 keycode lookup table, cached X11 cursor state, cached Wayland XKB modifier indices, and fixed Wayland keyboard repeat timer resource leak.
 

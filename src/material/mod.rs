@@ -166,64 +166,43 @@ pub mod shaders {
     impl PreprocessorConfig {}
 
     pub fn preprocess_shader(source: &str, config: &PreprocessorConfig) -> String {
-        let mut res = source.chars().collect::<Vec<_>>();
-
-        fn find(data: &[char], n: &mut usize, target: &str) -> bool {
-            if *n >= data.len() {
-                return false;
-            }
-            let target = target.chars().collect::<Vec<_>>();
-
-            'outer: for i in *n..data.len() {
-                for j in 0..target.len() {
-                    if data[i + j] != target[j] {
-                        *n += 1;
-                        continue 'outer;
-                    }
-                }
-                return true;
-            }
-            false
+        if !source.contains("#include") {
+            return source.to_owned();
         }
 
-        fn skip_character(data: &[char], n: &mut usize, target: char) {
-            while *n < data.len() && data[*n] == target {
-                *n += 1;
-            }
-        }
+        let mut res = source.to_owned();
+        let mut search_from = 0;
 
-        let mut i = 0;
-        while find(&res, &mut i, "#include") {
-            let directive_start_ix = i;
-            i += "#include".len();
-            skip_character(&res, &mut i, ' ');
-            assert!(res[i] == '\"');
-            i += 1;
-            let filename_start_ix = i;
-            find(&res, &mut i, "\"");
-            let filename_end_ix = i;
-            let filename = res[filename_start_ix..filename_end_ix]
-                .iter()
-                .cloned()
-                .collect::<String>();
+        while let Some(rel_idx) = res[search_from..].find("#include") {
+            let directive_start_ix = search_from + rel_idx;
+            let after_directive = &res[directive_start_ix + "#include".len()..];
+            let trimmed = after_directive.trim_start_matches(' ');
+            assert!(
+                trimmed.starts_with('"'),
+                "Expected '\"' after #include directive"
+            );
+            let after_open_quote = &trimmed[1..];
+            let close_quote_rel = after_open_quote
+                .find('"')
+                .expect("Unterminated #include filename");
+            let filename = &after_open_quote[..close_quote_rel];
+            let directive_end_ix =
+                res.len() - after_open_quote.len() + close_quote_rel + 1;
 
-            let include_content = config
+            let (_, include_content) = config
                 .includes
                 .iter()
-                .find(|(name, _)| name == &filename)
-                .expect(&format!(
-                    "Include file {filename} in not on \"includes\" list"
-                ));
+                .find(|(name, _)| name == filename)
+                .unwrap_or_else(|| {
+                    panic!("Include file {filename} in not on \"includes\" list")
+                });
 
-            let _ = res
-                .splice(
-                    directive_start_ix..filename_end_ix + 1,
-                    include_content.1.chars(),
-                )
-                .collect::<Vec<_>>();
+            let replacement_len = include_content.len();
+            res.replace_range(directive_start_ix..directive_end_ix, include_content);
+            search_from = directive_start_ix + replacement_len;
         }
 
-        res.into_iter().collect()
+        res
     }
 
     #[test]

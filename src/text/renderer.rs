@@ -21,10 +21,10 @@ struct BreakCandidate {
 #[derive(Debug, Clone, Copy)]
 pub struct PositionedGlyph {
     pub rect: Rect,
-    pub left: i32,
-    pub top: i32,
     pub x: f32,
     pub y: f32,
+    pub left: i16,
+    pub top: i16,
 }
 
 #[derive(Debug, Clone)]
@@ -34,8 +34,8 @@ pub struct ShapedCluster {
 }
 
 pub struct ShapedText {
-    pub glyphs: Vec<PositionedGlyph>,
-    pub clusters: Vec<ShapedCluster>,
+    pub glyphs: Box<[PositionedGlyph]>,
+    pub clusters: Box<[ShapedCluster]>,
     pub dimensions: TextDimensions,
 }
 
@@ -61,8 +61,8 @@ impl TextRenderer {
         let max_width = max_width.filter(|width| width.is_finite() && *width > 0.0);
         if text.is_empty() {
             return Arc::new(ShapedText {
-                glyphs: Vec::new(),
-                clusters: Vec::new(),
+                glyphs: Box::default(),
+                clusters: Box::default(),
                 dimensions: TextDimensions::default(),
             });
         }
@@ -191,8 +191,8 @@ impl TextRenderer {
         }
 
         Arc::new(ShapedText {
-            glyphs,
-            clusters,
+            glyphs: glyphs.into_boxed_slice(),
+            clusters: clusters.into_boxed_slice(),
             dimensions: TextDimensions {
                 width,
                 height: line_height * line_count as f32,

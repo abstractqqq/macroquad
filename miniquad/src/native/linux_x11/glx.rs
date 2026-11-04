@@ -195,7 +195,6 @@ impl Default for GLFBConfig {
 }
 
 pub struct GlxExtensions {
-    pub extensions_string: String,
     pub glxSwapIntervalExt: PFNGLXSWAPINTERVALEXTPROC,
     pub glxSwapIntervalMesa: PFNGLXSWAPINTERVALMESAPROC,
     pub glxCreateContextAttribsARB: PFNGLXCREATECONTEXTATTRIBSARBPROC,
@@ -241,9 +240,9 @@ impl Glx {
         }
 
         let exts = (libgl.glxQueryExtensionsString.unwrap())(display, screen);
-        let extensions = std::ffi::CStr::from_ptr(exts).to_str().unwrap().to_owned();
+        let extensions_string = std::ffi::CStr::from_ptr(exts).to_str().unwrap_or("");
 
-        let multisample = extensions.contains("GLX_ARB_multisample");
+        let multisample = extensions_string.contains("GLX_ARB_multisample");
         // let glx_ARB_framebuffer_sRGB =
         //     _sapp_glx_extsupported(b"GLX_ARB_framebuffer_sRGB\x00", exts);
         // _sapp_glx_EXT_framebuffer_sRGB =
@@ -280,9 +279,7 @@ impl Glx {
 
         (libx11.XFree)(result as *mut libc::c_void);
 
-        let extensions_string = extensions;
         let mut extensions = GlxExtensions {
-            extensions_string: extensions_string.clone(),
             glxSwapIntervalExt: None,
             glxSwapIntervalMesa: None,
             glxCreateContextAttribsARB: None,

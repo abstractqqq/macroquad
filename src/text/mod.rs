@@ -33,8 +33,8 @@ pub struct TextDimensions {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlyphMetric {
     pub rect: Option<crate::math::Rect>,
-    pub left: i32,
-    pub top: i32,
+    pub left: i16,
+    pub top: i16,
     pub advance: f32,
 }
 
@@ -107,8 +107,8 @@ impl FontData {
         } else {
             bytes.push(0);
         }
-        bytes.extend_from_slice(&metric.left.to_le_bytes());
-        bytes.extend_from_slice(&metric.top.to_le_bytes());
+        bytes.extend_from_slice(&(metric.left as i32).to_le_bytes());
+        bytes.extend_from_slice(&(metric.top as i32).to_le_bytes());
         bytes.extend_from_slice(&metric.advance.to_le_bytes());
     }
 
@@ -157,8 +157,8 @@ impl FontData {
             if offset + 12 > data.len() {
                 return Err(Error::FontError("Truncated font binary data"));
             }
-            let left = i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
-            let top = i32::from_le_bytes(data[offset + 4..offset + 8].try_into().unwrap());
+            let left = i32::from_le_bytes(data[offset..offset + 4].try_into().unwrap()) as i16;
+            let top = i32::from_le_bytes(data[offset + 4..offset + 8].try_into().unwrap()) as i16;
             let advance = f32::from_le_bytes(data[offset + 8..offset + 12].try_into().unwrap());
             offset += 12;
 
@@ -266,7 +266,7 @@ impl FontData {
             chars.push(' ');
         }
 
-        let mut rasterized_cache: foldhash::HashMap<u16, (Option<crate::math::Rect>, i32, i32)> =
+        let mut rasterized_cache: foldhash::HashMap<u16, (Option<crate::math::Rect>, i16, i16)> =
             foldhash::HashMap::default();
 
         for ch in chars {
@@ -607,7 +607,7 @@ impl Default for TextLayoutDrawParams {
 pub struct TextLayout {
     pub font: Font,
     pub shaped: Arc<renderer::ShapedText>,
-    pub cluster_colors: Vec<Option<Color>>,
+    pub cluster_colors: Box<[Option<Color>]>,
     pub dimensions: TextDimensions,
     pub font_size: f32,
     pub scale_x: f32,
@@ -660,20 +660,25 @@ pub fn prepare_text_layout(
     let base_scale = params.font_size as f32 / font.data.base_size;
     let max_width = params.max_width.map(|width| width / (base_scale * scale_x));
     let shaped = context.text_renderer.shape(&font, text, max_width);
-    let cluster_colors = shaped
-        .clusters
-        .iter()
-        .map(|cluster| {
-            color_spans
-                .iter()
-                .rev()
-                .find(|span| {
-                    span.range.start < cluster.source.end as usize
-                        && (cluster.source.start as usize) < span.range.end
-                })
-                .map(|span| span.color)
-        })
-        .collect();
+    let cluster_colors = if color_spans.is_empty() {
+        Box::default()
+    } else {
+        shaped
+            .clusters
+            .iter()
+            .map(|cluster| {
+                color_spans
+                    .iter()
+                    .rev()
+                    .find(|span| {
+                        span.range.start < cluster.source.end as usize
+                            && (cluster.source.start as usize) < span.range.end
+                    })
+                    .map(|span| span.color)
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    };
     let dimensions = TextDimensions {
         width: shaped.dimensions.width * base_scale * scale_x,
         height: shaped.dimensions.height * base_scale * scale_y,
@@ -721,7 +726,7 @@ pub fn draw_text_layout_ex(
         layout.scale_y,
         params.rotation,
         params.color,
-        Some(&layout.cluster_colors),
+        (!layout.cluster_colors.is_empty()).then_some(&layout.cluster_colors),
         params
             .visible_clusters
             .unwrap_or_else(|| layout.cluster_count()),

@@ -11,14 +11,17 @@ This report summarizes the optimization and bug-hunting audit of the `miniquad` 
   - Replaced `pub type Context = dyn RenderingBackend;` and `window::new_rendering_backend() -> Box<dyn RenderingBackend>` with a concrete `Context` returned by value (`GlContext` on non-Apple targets, `enum Context { Gl(GlContext), Metal(MetalContext) }` on Apple targets).
 - **Generic `miniquad::start` ([`src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L478-L534), [`src/event.rs`](file:///home/tq/Projects/macroquad/miniquad/src/event.rs#L238-L293))**:
   - Changed `pub fn start<H: 'static + EventHandler, F: 'static + FnOnce() -> H>(conf: conf::Conf, f: F)` so `EventHandler` implementations are unboxed and statically dispatched on Linux (`linux_x11` and `linux_wayland`).
-- **Zero-Allocation `RenderingBackend::info(&self) -> &ContextInfo` ([`src/graphics.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics.rs#L1101), [`src/graphics/gl.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L912-L915), [`src/graphics/metal.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/metal.rs#L436-L440))**:
-  - Changed `info(&self)` to return `&ContextInfo` by reference instead of cloning `ContextInfo` (and its heap-allocated `gl_version_string: String`) on every call.
+- **Zero-Allocation `RenderingBackend::info(&self) -> &ContextInfo` ([`src/graphics.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics.rs#L1079-L1085), [`src/graphics/gl.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L533-L607), [`src/graphics/metal.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/metal.rs#L419-L440))**:
+  - Removed the unused `gl_version_string: String` field from `ContextInfo` (making `ContextInfo` a 9-byte `Copy` struct), borrowed the OpenGL version string as `&str` during init, and changed `info(&self)` to return `&ContextInfo` by reference.
 - **Direct `texture_size` Lookup ([`src/graphics/gl.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L515-L526), [`src/graphics/metal.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/metal.rs#L589-L593))**:
   - Overrode `texture_size(&self, texture: TextureId) -> (u32, u32)` in `GlContext` and `MetalContext` to read `(width, height)` directly without copying the full `Texture` / `TextureParams` struct.
 - **Single-Lock Dropped Files Take ([`src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L377-L383))**:
   - Added `window::take_dropped_files()` to move `dropped_files.paths` and `dropped_files.bytes` out of `NATIVE_DISPLAY` in a single lock acquisition with zero buffer clones.
 
-### 2. OpenGL Backend (`src/graphics/gl.rs`) & Resource Management (`src/lib.rs`)
+### 2. OpenGL Backend (`src/graphics/gl.rs`, `src/graphics/gl/cache.rs`) & Resource Management (`src/lib.rs`)
+- **Compacted `VertexAttributeInternal` & Long-Lived `Box<[T]>` Slices**:
+  - Narrowed [`VertexAttributeInternal`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl/cache.rs#L3-L13) from 40 bytes to 24 bytes (`Option<CachedAttribute>` from 48 bytes to 28 bytes).
+  - Converted [`ShaderInternal::images`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L220-L224), [`ShaderInternal::uniforms`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L220-L224), [`PipelineInternal::layout`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L486-L491), and [`RenderPassInternal::color_textures`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L502-L508) / `resolves` from `Vec<T>` to `Box<[T]>`.
 - **`ResourceManager<T>` Free-List Reuse**:
   - Added `ResourceManager<T>` in [`src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L29-L78) and used it for `shaders`, `pipelines`, `passes`, and `buffers` in [`src/graphics/gl.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L529-L532), preventing unbounded vector growth when resources are created and deleted dynamically.
 - **GPU Resource Leak Fixes**:
