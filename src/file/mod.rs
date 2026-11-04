@@ -1,11 +1,17 @@
 //! Cross platform file management functions.
 
-use crate::{exec, Error};
+use crate::Error;
 
 /// Load file from the path and block until its loaded
 /// Loads a file through the platform filesystem.
 pub async fn load_file(path: &str) -> Result<Vec<u8>, Error> {
-    fn load_file_inner(path: &str) -> exec::FileLoadingFuture {
+    #[cfg(any(
+        target_arch = "wasm32",
+        target_os = "android",
+        target_os = "ios",
+        target_os = "tvos"
+    ))]
+    fn load_file_inner(path: &str) -> crate::exec::FileLoadingFuture {
         use std::sync::{Arc, Mutex};
 
         let contents = Arc::new(Mutex::new(None));
@@ -24,7 +30,7 @@ pub async fn load_file(path: &str) -> Result<Vec<u8>, Error> {
             });
         }
 
-        exec::FileLoadingFuture { contents }
+        crate::exec::FileLoadingFuture { contents }
     }
 
     #[cfg(any(target_os = "ios", target_os = "tvos"))]
@@ -37,6 +43,25 @@ pub async fn load_file(path: &str) -> Result<Vec<u8>, Error> {
         path.to_string()
     };
 
+    #[cfg(not(any(
+        target_arch = "wasm32",
+        target_os = "android",
+        target_os = "ios",
+        target_os = "tvos"
+    )))]
+    {
+        std::fs::read(&path).map_err(|e| Error::FileError {
+            kind: miniquad::fs::Error::IOError(e),
+            path,
+        })
+    }
+
+    #[cfg(any(
+        target_arch = "wasm32",
+        target_os = "android",
+        target_os = "ios",
+        target_os = "tvos"
+    ))]
     load_file_inner(&path).await
 }
 

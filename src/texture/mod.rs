@@ -1,6 +1,7 @@
 //! Loading and rendering textures. Also render textures, per-pixel image manipulations.
 
 use crate::{color::Color, file::load_file, get_context, get_quad_context, math::Rect, Error};
+use miniquad::RenderingBackend;
 
 pub use crate::quad_gl::FilterMode;
 use crate::quad_gl::{DrawMode, Vertex};
@@ -723,23 +724,25 @@ impl Texture2D {
     /// Uploads [Image] data to this texture.
     pub fn update(&self, image: &Image) {
         let ctx = get_quad_context();
-        let (width, height) = ctx.texture_size(self.raw_miniquad_id());
+        let id = self.raw_miniquad_id();
+        let (width, height) = ctx.texture_size(id);
 
         assert_eq!(width, image.width as u32);
         assert_eq!(height, image.height as u32);
 
-        ctx.texture_update(self.raw_miniquad_id(), &image.bytes);
+        ctx.texture_update_part(id, 0, 0, width as _, height as _, &image.bytes);
     }
 
     // Updates the texture from an array of bytes.
     pub fn update_from_bytes(&self, width: u32, height: u32, bytes: &[u8]) {
         let ctx = get_quad_context();
-        let (texture_width, texture_height) = ctx.texture_size(self.raw_miniquad_id());
+        let id = self.raw_miniquad_id();
+        let (texture_width, texture_height) = ctx.texture_size(id);
 
         assert_eq!(texture_width, width);
         assert_eq!(texture_height, height);
 
-        ctx.texture_update(self.raw_miniquad_id(), bytes);
+        ctx.texture_update_part(id, 0, 0, width as _, height as _, bytes);
     }
 
     /// Uploads [Image] data to part of this texture.

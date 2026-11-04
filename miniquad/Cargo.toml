@@ -1,0 +1,53 @@
+[package]
+name = "miniquad"
+version = "0.4.11"
+authors = ["not-fl3 <not.fl3@gmail.com>"]
+edition = "2021"
+rust-version = "1.70"
+license = "MIT OR Apache-2.0"
+publish = false
+description = """
+Cross-platform window context and rendering library.
+"""
+readme = "README.md"
+exclude = ["examples/"]
+keywords = ["graphics", "3D", "opengl", "gamedev", "windowing"]
+categories = ["rendering::graphics-api"]
+
+[features]
+
+# Optional log-rs like macros implementation
+# disabled by default
+log-impl = []
+
+[dependencies]
+foldhash = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3.8", features = [
+    "wingdi",
+    "winuser",
+    "libloaderapi",
+    "windef",
+    "shellscalingapi",
+    "errhandlingapi",
+    "windowsx",
+    "winbase",
+    "hidusage",
+    "shellapi",
+    "imm",
+] }
+
+[target.'cfg(target_os = "android")'.dependencies]
+libc = "0.2"
+ndk-sys = "0.2"
+
+[target.'cfg(any(target_os = "macos", target_os = "ios", target_os = "tvos"))'.dependencies]
+objc = { package = "objc-rs", version = "0.2" }
+
+[dev-dependencies]
+glam = { version = "0.34", default-features = false, features = ["std", "i32"] }
+swash = "0.2"

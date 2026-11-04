@@ -83,7 +83,7 @@ mod raw_miniquad {
     }
 
     impl Stage {
-        pub fn new(ctx: &mut dyn RenderingBackend) -> Stage {
+        pub fn new(ctx: &mut miniquad::Context) -> Stage {
             #[rustfmt::skip]
             let vertices: [Vertex; 4] = [
                 Vertex { pos : Vec2 { x: -0.5, y: -0.5 }, uv: Vec2 { x: 0., y: 0. } },

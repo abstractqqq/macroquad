@@ -382,11 +382,9 @@ pub fn show_mouse(shown: bool) {
 /// Return mouse position in pixels.
 pub fn mouse_position() -> (f32, f32) {
     let context = get_context();
+    let dpi = context.dpi_scale;
 
-    (
-        context.mouse_position.x / miniquad::window::dpi_scale(),
-        context.mouse_position.y / miniquad::window::dpi_scale(),
-    )
+    (context.mouse_position.x / dpi, context.mouse_position.y / dpi)
 }
 
 /// Return mouse position in range [-1; 1].

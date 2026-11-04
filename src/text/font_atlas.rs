@@ -24,8 +24,9 @@ impl FontAtlas {
         height: u16,
         bytes: &[u8],
         filter: miniquad::FilterMode,
-        ctx: &mut dyn miniquad::RenderingBackend,
+        ctx: &mut miniquad::Context,
     ) -> Self {
+        use miniquad::RenderingBackend;
         let texture = ctx.new_texture_from_rgba8(width, height, bytes);
         ctx.texture_set_filter(texture, filter, miniquad::MipmapFilterMode::None);
         Self {
@@ -38,6 +39,7 @@ impl FontAtlas {
 
 impl Drop for FontAtlas {
     fn drop(&mut self) {
+        use miniquad::RenderingBackend;
         get_context().quad_context.delete_texture(self.texture);
     }
 }

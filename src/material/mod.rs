@@ -126,7 +126,7 @@ pub fn load_material(
     let context = &mut get_context();
 
     let pipeline = context.gl.make_pipeline(
-        &mut *context.quad_context,
+        &mut context.quad_context,
         shader,
         params.pipeline_params,
         params.uniforms,

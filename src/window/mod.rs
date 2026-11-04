@@ -34,7 +34,7 @@ pub fn gl_set_drawcall_buffer_capacity(max_vertices: usize, max_indices: usize) 
 }
 
 pub struct InternalGlContext<'a> {
-    pub quad_context: &'a mut dyn miniquad::RenderingBackend,
+    pub quad_context: &'a mut miniquad::Context,
     pub quad_gl: &'a mut crate::quad_gl::QuadGl,
 }
 
@@ -57,27 +57,25 @@ pub unsafe fn get_internal_gl<'a>() -> InternalGlContext<'a> {
 
 pub fn screen_width() -> f32 {
     let context = get_context();
-    context.screen_width / miniquad::window::dpi_scale()
+    context.screen_width / context.dpi_scale
 }
 
 pub fn screen_height() -> f32 {
     let context = get_context();
 
-    context.screen_height / miniquad::window::dpi_scale()
+    context.screen_height / context.dpi_scale
 }
 
 pub fn screen_dpi_scale() -> f32 {
-    miniquad::window::dpi_scale()
+    get_context().dpi_scale
 }
 
 /// Request the window size to be the given value. This takes DPI into account.
 ///
 /// Note that the OS might decide to give a different size. Additionally, the size in rayquad won't be updated until the next `next_frame().await`.
 pub fn request_new_screen_size(width: f32, height: f32) {
-    miniquad::window::set_window_size(
-        (width * miniquad::window::dpi_scale()) as u32,
-        (height * miniquad::window::dpi_scale()) as u32,
-    );
+    let dpi = get_context().dpi_scale;
+    miniquad::window::set_window_size((width * dpi) as u32, (height * dpi) as u32);
     // We do not set the context.screen_width and context.screen_height here.
     // After `set_window_size` is called, EventHandlerFree::resize will be invoked, setting the size correctly.
     // Because the OS might decide to give a different screen dimension, setting the context.screen_* here would be confusing.

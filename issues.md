@@ -1,0 +1,75 @@
+# Rayquad & Miniquad Optimization Status and Open Issues
+
+This document tracks the performance, memory, and architectural optimizations completed across `rayquad` and its local `miniquad` workspace subcrate, as well as the deferred / platform-specific issues remaining to be addressed.
+
+---
+
+## Implemented Optimizations
+
+### 1. Workspace Subcrate Migration & Dependency Synchronization
+- **Local Subcrate**: Moved `miniquad` into [`miniquad/`](file:///home/tq/Projects/macroquad/miniquad/Cargo.toml) as a workspace member of [`Cargo.toml`](file:///home/tq/Projects/macroquad/Cargo.toml) (`publish = false`, `edition = "2021"`).
+- **Zero Duplicate Dependencies**: Synced `foldhash = "0.2"`, `winapi = "0.3.8"`, `glam = "0.34"`, and `swash = "0.2"`, and removed unused NixOS [`shell.nix`](file:///home/tq/Projects/macroquad/miniquad) and external dev-dependencies (`quad-rand`, `fontdue`). `cargo tree --duplicates --workspace` reports **0 duplicate crates**.
+
+### 2. Eliminated `Box<dyn ...>` Dynamic Dispatch on Hot Paths
+- **Concrete `miniquad::Context` ([`miniquad/src/graphics.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics.rs#L1369-L1682), [`miniquad/src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L140-L151), [`src/lib.rs`](file:///home/tq/Projects/macroquad/src/lib.rs#L216))**:
+  - Replaced `pub type Context = dyn RenderingBackend;` and `new_rendering_backend() -> Box<dyn RenderingBackend>` with a concrete `miniquad::Context` returned and stored by value (`pub type Context = GlContext;` on non-Apple targets, and `pub enum Context { Gl(GlContext), Metal(MetalContext) }` on Apple targets).
+  - Stored `quad_context: miniquad::Context` directly inline inside `rayquad::Context` (`get_quad_context() -> &'static mut miniquad::Context`), turning every `QuadGl` and texture/buffer/pipeline/draw call into a direct statically-dispatched call eligible for inlining.
+- **Unboxed Generic `EventHandler` ([`miniquad/src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L478-L534), [`miniquad/src/event.rs`](file:///home/tq/Projects/macroquad/miniquad/src/event.rs#L238-L293), [`miniquad/src/native/linux_x11.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native/linux_x11.rs#L72-L76), [`miniquad/src/native/linux_wayland.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native/linux_wayland.rs#L1052-L1055))**:
+  - Changed `miniquad::start<H, F>(conf: conf::Conf, f: F)` where `H: 'static + EventHandler, F: 'static + FnOnce() -> H` so `Stage` is stored unboxed on the stack and dispatched statically on Linux (`linux_x11` and `linux_wayland`).
+  - Implemented `EventHandler` for `Box<T: EventHandler + ?Sized>` for backwards compatibility.
+
+### 3. `rayquad` $\leftrightarrow$ `miniquad` Boundary Optimizations
+- **Cached Window State in `rayquad::Context` & Eliminated Per-Frame `NATIVE_DISPLAY` Locks**:
+  - Cached `dpi_scale` and `blocking_event_loop` alongside `screen_width` and `screen_height` in [`rayquad::Context`](file:///home/tq/Projects/macroquad/src/lib.rs#L178-L181) (initialized in [`Context::new`](file:///home/tq/Projects/macroquad/src/lib.rs#L237-L249) and updated on resize in [`Stage::resize_event`](file:///home/tq/Projects/macroquad/src/lib.rs#L422-L431)).
+  - Updated [`window::screen_width`](file:///home/tq/Projects/macroquad/src/window/mod.rs#L58-L61), [`window::screen_height`](file:///home/tq/Projects/macroquad/src/window/mod.rs#L63-L67), [`window::screen_dpi_scale`](file:///home/tq/Projects/macroquad/src/window/mod.rs#L69-L71), [`window::request_new_screen_size`](file:///home/tq/Projects/macroquad/src/window/mod.rs#L76-L78), [`input::mouse_position`](file:///home/tq/Projects/macroquad/src/input/mod.rs#L383-L388), [`Context::pixel_perfect_projection_matrix`](file:///home/tq/Projects/macroquad/src/lib.rs#L368-L379), [`QuadGl::draw`](file:///home/tq/Projects/macroquad/src/quad_gl.rs#L780-L783), [`GrabScreenTexture::end`](file:///home/tq/Projects/macroquad/src/quad_gl.rs#L271-L273), and [`text::camera_font_scale`](file:///home/tq/Projects/macroquad/src/text/mod.rs#L1063-L1065) to read directly from `rayquad::Context` with **zero `NATIVE_DISPLAY` `Mutex` locks** during frame execution.
+  - Removed the unconditional per-frame `miniquad::window::set_cursor_grab(get_context().cursor_grabbed)` from [`Stage::update`](file:///home/tq/Projects/macroquad/src/lib.rs#L574-L577), which was locking `NATIVE_DISPLAY`, sending a `Request::SetCursorGrab` over the `mpsc` channel, and triggering `XUngrabPointer` + `XFlush` on X11 every single frame. Instead, cursor grab is applied on change in [`set_cursor_grab`](file:///home/tq/Projects/macroquad/src/input/mod.rs#L371-L375) and re-applied on window restore in [`Stage::window_restored_event`](file:///home/tq/Projects/macroquad/src/lib.rs#L631-L636).
+- **Eliminated `Bindings` Heap Allocations in `QuadGl` ([`src/quad_gl.rs`](file:///home/tq/Projects/macroquad/src/quad_gl.rs#L100-L105), [`src/quad_gl.rs`](file:///home/tq/Projects/macroquad/src/quad_gl.rs#L617-L621), [`src/quad_gl.rs`](file:///home/tq/Projects/macroquad/src/quad_gl.rs#L844-L869))**:
+  - Replaced `draw_calls_bindings: Vec<Bindings>` with `Vec<DrawCallBindings>` storing flat `Copy` buffer handles `(vertex_buffer: BufferId, index_buffer: BufferId)`, and passed a stack-allocated `[TextureId; MAX_SHADERSTAGE_IMAGES]` slice directly to `ctx.apply_bindings_from_slice(...)`.
+  - Replaced `CameraSnapshotter::bindings: Bindings` (and its unused 1x1 dummy texture allocation) with `vertex_buffer: BufferId, index_buffer: BufferId` and `ctx.apply_bindings_from_slice(...)`.
+  - Fixed [`QuadGl::update_drawcall_capacity`](file:///home/tq/Projects/macroquad/src/quad_gl.rs#L1086-L1127) to allocate `PackedVertex` buffers when `feature = "3d"` is enabled.
+- **Zero-Allocation `ctx.info()` & Fast `ctx.texture_size()` ([`miniquad/src/graphics.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics.rs#L1101), [`miniquad/src/graphics/gl.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L515-L526), [`src/texture/mod.rs`](file:///home/tq/Projects/macroquad/src/texture/mod.rs#L724-L745))**:
+  - Changed `RenderingBackend::info(&self)` to return `&ContextInfo` instead of cloning `ContextInfo` (and heap-allocating `gl_version_string: String` on every call).
+  - Overrode `texture_size` in `GlContext` and `MetalContext` to read `(width, height)` directly without copying `Texture` / `TextureParams`, and updated `Texture2D::update` / `Texture2D::update_from_bytes` to call `ctx.texture_update_part` directly after checking dimensions instead of querying `texture_size` twice.
+- **Eliminated Redundant Clones in `make_pipeline` ([`src/quad_gl.rs`](file:///home/tq/Projects/macroquad/src/quad_gl.rs#L518-L580), [`src/quad_gl.rs`](file:///home/tq/Projects/macroquad/src/quad_gl.rs#L679-L718))**:
+  - Replaced `shader::uniforms() -> Vec<...>` and $3 \times O(N)$ `uniforms.insert(0, ...)` shifts with a `const UNIFORMS` array chained into `uniforms.into_iter()`, moving `UniformDesc::name` `String`s directly into `Box<str>` without cloning.
+- **Single-Lock, Zero-Clone Dropped Files ([`miniquad/src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L377-L383), [`src/lib.rs`](file:///home/tq/Projects/macroquad/src/lib.rs#L571-L584))**:
+  - Added `miniquad::window::take_dropped_files()` to take ownership of dropped file `PathBuf`s and `Vec<u8>` buffers in a single `NATIVE_DISPLAY` lock acquisition with zero buffer clones.
+- **Direct Desktop File Loading ([`src/file/mod.rs`](file:///home/tq/Projects/macroquad/src/file/mod.rs#L45-L56))**:
+  - On desktop platforms (`linux`, `windows`, `macos`), `load_file` now calls `std::fs::read` directly without allocating `Arc<str>`, `Arc<Mutex<Option<...>>>`, and polling `FileLoadingFuture`.
+
+### 4. Previously Completed GL & Linux Backend Fixes in `miniquad`
+- **`ResourceManager<T>` generational/free-list storage** in [`miniquad/src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L29-L78) and [`miniquad/src/graphics/gl.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L515-L520) preventing unbounded vector growth and GPU resource leaks (`glDetachShader` + `glDeleteShader`, `glDeleteBuffers`, `glDeleteFramebuffers`, `glDeleteProgram`, cached `readback_fbo`).
+- **Linux X11 & Wayland**: `foldhash` cursor/touch maps, 256-entry X11 keycode lookup table, cached X11 cursor state, cached Wayland XKB modifier indices, and fixed Wayland keyboard repeat timer resource leak.
+
+---
+
+## Deferred / Open Issues
+
+### 1. `NATIVE_DISPLAY` `Mutex` in `miniquad` (Cross-Platform)
+- **Location**: [`miniquad/src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L101-L124) (`static NATIVE_DISPLAY: OnceLock<Mutex<native::NativeDisplayData>>`)
+- **Status**: All per-frame/hot-path locks from `rayquad` have been eliminated by caching `screen_width`, `screen_height`, `dpi_scale`, and `blocking_event_loop` in `rayquad::Context`.
+- **Remaining Opportunity**: Inside `miniquad` itself, `OnceLock<Mutex<NativeDisplayData>>` and `mpsc::Sender<Request>` can optionally be replaced with `thread_local! { RefCell<Option<NativeDisplayData>> }` and a plain `Vec<Request>` since `miniquad`'s event loop is single-threaded.
+
+### 2. `Box<dyn Clipboard>` in `NativeDisplayData` (Cross-Platform / Linux)
+- **Location**: [`miniquad/src/native.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native.rs#L29) (`pub clipboard: Box<dyn Clipboard>`)
+- **Problem**: Every platform except Linux has only a single clipboard implementation, and Linux has two (`X11Clipboard` and `WaylandClipboard`), yet `NativeDisplayData` boxes it as a trait object.
+- **Proposed Fix**:
+  - Replace `Box<dyn Clipboard>` with a platform-specific concrete `PlatformClipboard` type (and on Linux, `pub enum LinuxClipboard { X11(X11Clipboard), Wayland(WaylandClipboard) }`).
+
+### 3. `Box<dyn Fn(Request) + Send>` on Android in `NativeDisplayData`
+- **Location**: [`miniquad/src/native.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native.rs#L35), [`miniquad/src/native/android.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native/android.rs#L406)
+- **Problem**: On Android, `native_requests` is typed as `Box<dyn Fn(Request) + Send>`, even though the closure in `android.rs` is non-capturing (`Box::new(process_request)`).
+- **Proposed Fix**:
+  - Change the field type on Android to a plain function pointer `pub native_requests: fn(Request)` and initialize it with `native_requests: process_request`.
+
+### 4. Apple Metal Backend (`miniquad/src/graphics/metal.rs`)
+- **Synchronous `waitUntilCompleted` Pipeline Stall**: [`commit_frame`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/metal.rs#L1185) calls `[commandBuffer waitUntilCompleted]` after presenting the drawable, serializing CPU and GPU execution and preventing triple-buffered pipelining. Should use a 3-slot `dispatch_semaphore_t` signaled via `addCompletedHandler:`.
+- **Uniform Buffer Frame Index Rotation Per Draw Call**: [`apply_uniforms_from_bytes`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/metal.rs#L1135) increments `current_frame_index = (current_frame_index + 1) % 3` on every draw call instead of once per frame in `commit_frame()`.
+- **Buffer Update `didModifyRange` Bug**: [`buffer_update`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/metal.rs#L747) copies into `buffer.raw[buffer.next_value]` without advancing `next_value` on subsequent mid-frame updates, and on macOS calls `didModifyRange` with `NSRange::new(0, data.size)` instead of `NSRange::new(0, (data.size * data.element_size) as u64)`.
+- **Resource Leaks**: `buffers`, `textures`, `passes`, `shaders`, and `pipelines` in `MetalContext` use append-only `Vec`s instead of `ResourceManager`, and `delete_shader` / `delete_pipeline` are no-ops.
+
+### 5. Android Backend (`miniquad/src/native/android.rs`)
+- **Asset Loading Memory Leak & Double Copy**: [`load_asset`](file:///home/tq/Projects/macroquad/miniquad/src/native/android.rs#L655-L674) allocates a buffer via `libc::malloc`, reads into it, copies it into a Rust `Vec<u8>`, and never calls `libc::free(buf)`. Should read directly into a pre-sized `Vec<u8>` and drop the `malloc`.
+- **Background Busy-Wait Spin Loop**: In [`MainThread::next_event`](file:///home/tq/Projects/macroquad/miniquad/src/native/android.rs#L207-L234), when the app is backgrounded (`SurfaceDestroyed`), the loop spins at 100% CPU calling `thread::yield_now()` instead of blocking on `rx.recv()` or `Condvar`.
+- **Uncached JNI Lookups**: [`attach_jni_env`](file:///home/tq/Projects/macroquad/miniquad/src/native/android.rs#L533-L547) calls `GetObjectClass` and `GetMethodID` on every clipboard or keyboard request instead of caching method IDs at startup.
+

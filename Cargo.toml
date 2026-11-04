@@ -1,3 +1,6 @@
+[workspace]
+members = ["miniquad"]
+
 [package]
 name = "rayquad"
 version = "0.1.0"
@@ -28,7 +31,7 @@ opt-level = 3
 all-features = true
 
 [dependencies]
-miniquad = { version = "=0.4.11", features = ["log-impl"] }
+miniquad = { path = "miniquad", features = ["log-impl"] }
 glam = { version = "0.34", default-features = false, features = ["std", "i32"] }
 png = "0.18"
 foldhash = "0.2"

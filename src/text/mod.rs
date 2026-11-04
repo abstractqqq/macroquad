@@ -19,8 +19,6 @@ pub mod line_break;
 pub(crate) mod rasterizer;
 pub mod renderer;
 
-use renderer::TextRenderer;
-
 use self::font_atlas::FontAtlas;
 #[cfg(feature = "font-rasterize")]
 use self::{font_atlas::FontAtlasBuilder, rasterizer::Rasterizer};
@@ -333,7 +331,7 @@ impl Font {
     pub(crate) fn load_from_bytes(
         bytes: &[u8],
         params: FontLoadParams,
-        ctx: &mut dyn miniquad::RenderingBackend,
+        ctx: &mut miniquad::Context,
     ) -> Result<Self, Error> {
         let filter = params.filter;
         let (mut font_data, image) = FontData::bake_from_ttf_bytes(bytes, params)?;
@@ -350,7 +348,7 @@ impl Font {
         bin_bytes: &[u8],
         png_bytes: &[u8],
         filter: miniquad::FilterMode,
-        ctx: &mut dyn miniquad::RenderingBackend,
+        ctx: &mut miniquad::Context,
     ) -> Result<Self, Error> {
         let (width, height, rgba) = crate::texture::decode_png_rgba8(png_bytes)?;
         let atlas = FontAtlas::from_rgba8(width, height, &rgba, filter, ctx);
@@ -728,7 +726,6 @@ pub fn draw_text_layout_ex(
             .visible_clusters
             .unwrap_or_else(|| layout.cluster_count()),
         &mut context.gl,
-        &mut *context.quad_context,
     )
 }
 
@@ -753,7 +750,7 @@ pub fn load_ttf_font_from_bytes(bytes: &[u8]) -> Result<Font, Error> {
 #[cfg(feature = "font-rasterize")]
 pub fn load_ttf_font_from_bytes_ex(bytes: &[u8], params: FontLoadParams) -> Result<Font, Error> {
     let context = get_context();
-    Font::load_from_bytes(bytes, params, &mut *context.quad_context)
+    Font::load_from_bytes(bytes, params, &mut context.quad_context)
 }
 
 /// Loads a pre-baked font asset (bin metrics + png atlas) asynchronously from file paths.
@@ -769,7 +766,7 @@ pub async fn load_baked_font(
         .await
         .map_err(|_| Error::FontError("Could not load font .png file"))?;
     let context = get_context();
-    Font::load_baked_from_bytes(&bin_bytes, &png_bytes, filter, &mut *context.quad_context)
+    Font::load_baked_from_bytes(&bin_bytes, &png_bytes, filter, &mut context.quad_context)
 }
 
 /// Loads a pre-baked font asset (bin metrics + png atlas) synchronously from byte slices.
@@ -779,7 +776,7 @@ pub fn load_baked_font_from_bytes(
     filter: miniquad::FilterMode,
 ) -> Result<Font, Error> {
     let context = get_context();
-    Font::load_baked_from_bytes(bin_bytes, png_bytes, filter, &mut *context.quad_context)
+    Font::load_baked_from_bytes(bin_bytes, png_bytes, filter, &mut context.quad_context)
 }
 
 pub fn draw_text(
@@ -827,7 +824,6 @@ pub fn draw_text_ex(
         params.rotation,
         params.color,
         &mut context.gl,
-        &mut *context.quad_context,
     )
 }
 
@@ -1029,8 +1025,7 @@ pub(crate) struct FontsStorage {
 
 impl FontsStorage {
     pub(crate) fn new(
-        ctx: &mut dyn miniquad::RenderingBackend,
-        _text_renderer: &mut TextRenderer,
+        ctx: &mut miniquad::Context,
         filter: miniquad::FilterMode,
     ) -> Self {
         #[cfg(feature = "font-rasterize")]
@@ -1067,7 +1062,7 @@ pub fn set_default_font(font: Font) {
 
 pub fn camera_font_scale(world_font_size: f32) -> (u16, f32, f32) {
     let context = get_context();
-    let (screen_width, screen_height) = miniquad::window::screen_size();
+    let (screen_width, screen_height) = (context.screen_width, context.screen_height);
     let camera_space = context
         .projection_matrix()
         .inverse()

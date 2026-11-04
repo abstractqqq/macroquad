@@ -249,7 +249,6 @@ impl TextRenderer {
         rotation: f32,
         color: Color,
         gl: &mut QuadGl,
-        _backend: &mut dyn miniquad::RenderingBackend,
     ) -> TextDimensions {
         if text.is_empty() {
             return TextDimensions::default();
@@ -370,7 +369,6 @@ impl TextRenderer {
         cluster_colors: Option<&[Option<Color>]>,
         visible_clusters: usize,
         gl: &mut QuadGl,
-        _backend: &mut dyn miniquad::RenderingBackend,
     ) -> TextDimensions {
         let visible_clusters = visible_clusters.min(shaped.clusters.len());
         let atlas = font.atlas();

@@ -177,6 +177,8 @@ struct Context {
 
     screen_width: f32,
     screen_height: f32,
+    dpi_scale: f32,
+    blocking_event_loop: bool,
 
     simulate_mouse_with_touch: bool,
 
@@ -213,7 +215,7 @@ struct Context {
     unwind: bool,
     recovery_future: Option<Pin<Box<dyn Future<Output = ()>>>>,
 
-    quad_context: Box<dyn miniquad::RenderingBackend>,
+    quad_context: miniquad::Context,
 
     default_filter_mode: crate::quad_gl::FilterMode,
     textures: crate::texture::TexturesContext,
@@ -232,17 +234,19 @@ impl Context {
         draw_call_vertex_capacity: usize,
         draw_call_index_capacity: usize,
     ) -> Context {
-        let mut ctx: Box<dyn miniquad::RenderingBackend> =
-            miniquad::window::new_rendering_backend();
+        let mut ctx = miniquad::window::new_rendering_backend();
         let (screen_width, screen_height) = miniquad::window::screen_size();
+        let dpi_scale = miniquad::window::dpi_scale();
+        let blocking_event_loop = miniquad::window::blocking_event_loop();
 
-        let mut text_renderer = text::renderer::TextRenderer::new();
-        let fonts_storage =
-            text::FontsStorage::new(&mut *ctx, &mut text_renderer, default_filter_mode);
+        let text_renderer = text::renderer::TextRenderer::new();
+        let fonts_storage = text::FontsStorage::new(&mut ctx, default_filter_mode);
 
         Context {
             screen_width,
             screen_height,
+            dpi_scale,
+            blocking_event_loop,
 
             simulate_mouse_with_touch: true,
 
@@ -261,7 +265,7 @@ impl Context {
 
             camera_matrix: None,
             gl: QuadGl::new(
-                &mut *ctx,
+                &mut ctx,
                 draw_call_vertex_capacity,
                 draw_call_index_capacity,
             ),
@@ -364,11 +368,16 @@ impl Context {
     }
 
     pub(crate) fn pixel_perfect_projection_matrix(&self) -> glam::Mat4 {
-        let (width, height) = miniquad::window::screen_size();
+        let dpi = self.dpi_scale;
 
-        let dpi = miniquad::window::dpi_scale();
-
-        glam::camera::rh::proj::opengl::orthographic(0., width / dpi, height / dpi, 0., -1., 1.)
+        glam::camera::rh::proj::opengl::orthographic(
+            0.,
+            self.screen_width / dpi,
+            self.screen_height / dpi,
+            0.,
+            -1.,
+            1.,
+        )
     }
 
     pub(crate) fn projection_matrix(&self) -> glam::Mat4 {
@@ -395,14 +404,14 @@ fn get_context() -> &'static mut Context {
     unsafe { CONTEXT.as_mut().unwrap_or_else(|| panic!()) }
 }
 
-fn get_quad_context() -> &'static mut dyn miniquad::RenderingBackend {
+fn get_quad_context() -> &'static mut miniquad::Context {
     thread_assert::same_thread();
 
     unsafe {
         assert!(CONTEXT.is_some());
     }
 
-    unsafe { &mut *CONTEXT.as_mut().unwrap().quad_context }
+    unsafe { &mut CONTEXT.as_mut().unwrap().quad_context }
 }
 
 struct Stage {
@@ -411,10 +420,12 @@ struct Stage {
 
 impl EventHandler for Stage {
     fn resize_event(&mut self, width: f32, height: f32) {
-        get_context().screen_width = width;
-        get_context().screen_height = height;
+        let context = get_context();
+        context.screen_width = width;
+        context.screen_height = height;
+        context.dpi_scale = miniquad::window::dpi_scale();
 
-        if miniquad::window::blocking_event_loop() {
+        if context.blocking_event_loop {
             miniquad::window::schedule_update();
         }
     }
@@ -555,25 +566,27 @@ impl EventHandler for Stage {
         let context = get_context();
         context.keyboard.release(keycode);
 
-        if miniquad::window::blocking_event_loop() {
+        if context.blocking_event_loop {
             //miniquad::window::schedule_update();
         }
     }
 
     fn update(&mut self) {
-        // Unless called every frame, cursor will not remain grabbed
-        miniquad::window::set_cursor_grab(get_context().cursor_grabbed);
-
         // TODO: consider making it a part of miniquad?
         std::thread::yield_now();
     }
 
     fn files_dropped_event(&mut self) {
         let context = get_context();
-        for i in 0..miniquad::window::dropped_file_count() {
+        let (paths, bytes) = miniquad::window::take_dropped_files();
+        let len = paths.len().max(bytes.len());
+        let mut paths = paths.into_iter();
+        let mut bytes = bytes.into_iter();
+        context.dropped_files.reserve(len);
+        for _ in 0..len {
             context.dropped_files.push(DroppedFile {
-                path: miniquad::window::dropped_file_path(i),
-                bytes: miniquad::window::dropped_file_bytes(i),
+                path: paths.next(),
+                bytes: bytes.next(),
             });
         }
     }
@@ -618,10 +631,14 @@ impl EventHandler for Stage {
     fn window_restored_event(&mut self) {
         let context = get_context();
 
+        if context.cursor_grabbed {
+            miniquad::window::set_cursor_grab(true);
+        }
+
         #[cfg(target_os = "android")]
         context.audio_context.resume();
         #[cfg(target_os = "android")]
-        if miniquad::window::blocking_event_loop() {
+        if context.blocking_event_loop {
             miniquad::window::schedule_update();
         }
     }
@@ -747,7 +764,7 @@ impl Window {
             );
             unsafe { CONTEXT = Some(context) };
 
-            Box::new(Stage {
+            Stage {
                 main_future: Box::pin(async {
                     future.await;
                     unsafe {
@@ -756,7 +773,7 @@ impl Window {
                         }
                     }
                 }),
-            })
+            }
         });
     }
 }

@@ -16,7 +16,8 @@ pub use crate::color::{colors::*, Color};
 pub use crate::quad_gl::{DrawMode, GlPipeline, QuadGl};
 pub use glam;
 pub use miniquad::{
-    conf::Conf, Comparison, PipelineParams, ShaderError, ShaderSource, UniformDesc, UniformType,
+    conf::Conf, Comparison, PipelineParams, RenderingBackend, ShaderError, ShaderSource,
+    UniformDesc, UniformType,
 };
 pub use crate::rand;
 
