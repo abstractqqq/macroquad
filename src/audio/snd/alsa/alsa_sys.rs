@@ -101,4 +101,5 @@ extern "C" {
         size: snd_pcm_uframes_t,
     ) -> snd_pcm_sframes_t;
     pub fn snd_pcm_recover(pcm: *mut snd_pcm_t, err: c_int, silent: c_int) -> c_int;
+    pub fn snd_pcm_close(pcm: *mut snd_pcm_t) -> c_int;
 }

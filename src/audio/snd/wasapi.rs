@@ -79,8 +79,20 @@ unsafe fn audio_thread(mut mixer: super::mixer::Mixer) {
         &IID_IMMDeviceEnumerator,
         &mut device_enumerator as *mut _ as _,
     );
+    // These startup asserts panic the audio thread (and kill audio permanently)
+    // if there is no usable output device at launch.
     assert!(hr >= 0, "CoCreatInstance failed");
 
+    // KNOWN LIMITATION: the default endpoint is resolved exactly once, here.
+    // - Headphones on the same sound card's jack: the endpoint stays the same
+    //   (the driver switches the output internally), so audio follows.
+    // - USB/Bluetooth headphones appear as a *new* endpoint. This stream stays
+    //   bound to the old device, so audio does NOT move until the game restarts.
+    // - If the bound device is removed, the client is invalidated
+    //   (AUDCLNT_E_DEVICE_INVALIDATED) and audio stays silent for good.
+    // Fixing this needs an IMMNotificationClient (OnDefaultDeviceChanged) or
+    // polling GetDefaultAudioEndpoint, then re-creating device/client/render
+    // client below. Compare with the ALSA backend, which reopens on failure.
     let mut device: *mut IMMDevice = std::ptr::null_mut();
     let hr = (*device_enumerator).GetDefaultAudioEndpoint(eRender, eConsole, &mut device);
     assert!(hr >= 0, "GetDefaultAudioEndPoint failed");
@@ -158,10 +170,15 @@ unsafe fn audio_thread(mut mixer: super::mixer::Mixer) {
 
     (*audio_client).Start();
     loop {
+        // KNOWN LIMITATION: INFINITE wait. If the device is invalidated or
+        // removed, the event never fires again and this thread hangs silently.
+        // A timeout + re-initialization would let it recover.
         WaitForSingleObject(buffer_end_event, INFINITE);
 
         let mut padding = 0;
         if (*audio_client).GetCurrentPadding(&mut padding) < 0 {
+            // Errors (incl. AUDCLNT_E_DEVICE_INVALIDATED) are ignored rather than
+            // recovered from; see the notes above.
             continue;
         }
         let num_frames = dst_buffer_frames - padding;
