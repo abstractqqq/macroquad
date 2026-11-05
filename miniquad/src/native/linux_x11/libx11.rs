@@ -704,9 +704,12 @@ pub mod X_h {
     pub const Mod4Mask: libc::c_int = (1 as libc::c_int) << 6 as libc::c_int;
 
     pub const AnyPropertyType: libc::c_ulong = 0 as libc::c_ulong;
+    pub const XA_ATOM: Atom = 4;
+    pub const XA_STRING: Atom = 31;
     pub const CurrentTime: libc::c_long = 0 as libc::c_long;
 
     pub const PropertyNotify: libc::c_int = 28 as libc::c_int;
+    pub const SelectionClear: libc::c_int = 29 as libc::c_int;
     pub const SelectionRequest: libc::c_int = 30 as libc::c_int;
     pub const SelectionNotify: libc::c_int = 31 as libc::c_int;
     pub const ClientMessage: libc::c_int = 33 as libc::c_int;
@@ -857,6 +860,10 @@ declare_atoms!(
     cardinal: "CARDINAL",
     // clipboard
     clipboard: "CLIPBOARD",
+    targets: "TARGETS",
+    text: "TEXT",
+    mime_text_plain: "text/plain",
+    mime_text_plain_utf8: "text/plain;charset=utf-8",
     xsel_data: "XSEL_DATA",
     incr: "INCR",
     // drag_n_drop related
@@ -924,6 +931,8 @@ crate::declare_module!(
     pub fn XQueryExtension(*mut Display, *const c_char, *mut c_int, *mut c_int, *mut c_int) -> c_int,
     pub fn XConvertSelection(*mut Display, Atom, Atom, Atom, Window, Time) -> c_int,
     pub fn XSetSelectionOwner(*mut Display, Atom, Window, Time) -> c_int,
+    pub fn XGetSelectionOwner(*mut Display, Atom) -> Window,
+    pub fn XCheckTypedWindowEvent(*mut Display, Window, c_int, *mut XEvent) -> c_int,
     pub fn XCreateFontCursor(*mut Display, c_ushort) -> Cursor,
     pub fn XCreateBitmapFromData(*mut Display, Drawable, *const c_char, c_uint, c_uint) -> Pixmap,
     pub fn XCreatePixmapCursor(*mut Display, Pixmap, Pixmap, *mut XColor, *mut XColor, c_uint, c_uint) -> Cursor,

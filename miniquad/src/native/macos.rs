@@ -108,26 +108,6 @@ impl MacosDisplay {
             }
         }
     }
-    fn clipboard_get(&mut self) -> Option<String> {
-        unsafe {
-            let pasteboard: ObjcId = msg_send![class!(NSPasteboard), generalPasteboard];
-            let content: ObjcId = msg_send![pasteboard, stringForType: NSStringPboardType];
-            let string = nsstring_to_string(content);
-            if string.is_empty() {
-                return None;
-            }
-            Some(string)
-        }
-    }
-    fn clipboard_set(&mut self, data: &str) {
-        let str: ObjcId = str_to_nsstring(data);
-        unsafe {
-            let pasteboard: ObjcId = msg_send![class!(NSPasteboard), generalPasteboard];
-            let () = msg_send![pasteboard, clearContents];
-            let arr: ObjcId = msg_send![class!(NSArray), arrayWithObject: str];
-            let () = msg_send![pasteboard, writeObjects: arr];
-        }
-    }
 
     pub fn context(&mut self) -> Option<&mut dyn EventHandler> {
         let event_handler = self.event_handler.as_deref_mut()?;
@@ -1072,12 +1052,46 @@ unsafe fn create_opengl_view(
     view
 }
 
-struct MacosClipboard;
-impl crate::native::Clipboard for MacosClipboard {
-    fn get(&mut self) -> Option<String> {
-        None
+pub struct MacosClipboard;
+impl MacosClipboard {
+    pub fn new() -> MacosClipboard {
+        MacosClipboard
     }
-    fn set(&mut self, _data: &str) {}
+
+    pub fn get(&mut self) -> Option<String> {
+        unsafe {
+            let pasteboard: ObjcId = msg_send![class!(NSPasteboard), generalPasteboard];
+            if pasteboard.is_null() {
+                return None;
+            }
+            let content: ObjcId = msg_send![pasteboard, stringForType: NSStringPboardType];
+            if content.is_null() {
+                return None;
+            }
+            Some(nsstring_to_string(content))
+        }
+    }
+
+    pub fn set(&mut self, data: &str) -> Result<(), crate::native::ClipboardError> {
+        let str: ObjcId = str_to_nsstring(data);
+        if str.is_null() {
+            return Err(crate::native::ClipboardError::OperationFailed);
+        }
+        unsafe {
+            let pasteboard: ObjcId = msg_send![class!(NSPasteboard), generalPasteboard];
+            if pasteboard.is_null() {
+                return Err(crate::native::ClipboardError::Unavailable);
+            }
+            let _: isize = msg_send![pasteboard, clearContents];
+            let arr: ObjcId = msg_send![class!(NSArray), arrayWithObject: str];
+            let ok: BOOL = msg_send![pasteboard, writeObjects: arr];
+            if ok == NO {
+                Err(crate::native::ClipboardError::OperationFailed)
+            } else {
+                Ok(())
+            }
+        }
+    }
 }
 
 struct FrameSignal {
@@ -1178,7 +1192,7 @@ unsafe extern "C" fn release_data(info: *mut c_void, _: *const c_void, _: usize)
 unsafe fn set_icon(ns_app: ObjcId, icon: &Icon) {
     let width = 64_usize;
     let height = 64_usize;
-    let colors = &icon.big[..];
+    let colors = &icon.0[..];
     let rgb = CGColorSpaceCreateDeviceRGB();
     let bits_per_component: usize = 8; // number of bits in UInt8
     let bits_per_pixel = 4 * bits_per_component; // ARGB uses 4 components
@@ -1312,7 +1326,7 @@ where
     F: 'static + FnOnce() -> Box<dyn EventHandler>,
 {
     let (tx, rx) = std::sync::mpsc::channel();
-    let clipboard = Box::new(MacosClipboard);
+    let clipboard = MacosClipboard::new();
     crate::set_display(NativeDisplayData {
         high_dpi: conf.high_dpi,
         gfx_api: conf.platform.apple_gfx_api,

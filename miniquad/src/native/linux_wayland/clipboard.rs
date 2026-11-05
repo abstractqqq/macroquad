@@ -1,7 +1,46 @@
 use super::*;
+use crate::native::ClipboardError;
 use crate::{wl_request, wl_request_constructor};
 
-use core::ffi::{c_char, c_int, c_void};
+use core::ffi::{c_char, c_int, c_void, CStr};
+
+const MIME_TEXT_PLAIN_UTF8: u8 = 1 << 0;
+const MIME_TEXT_PLAIN: u8 = 1 << 1;
+const MIME_UTF8_STRING: u8 = 1 << 2;
+const MIME_TEXT: u8 = 1 << 3;
+const MIME_STRING: u8 = 1 << 4;
+
+const OFFERED_MIMES: [&CStr; 5] = [
+    c"text/plain;charset=utf-8",
+    c"text/plain",
+    c"UTF8_STRING",
+    c"TEXT",
+    c"STRING",
+];
+
+pub(super) unsafe extern "C" fn data_offer_handle_offer(
+    data: *mut c_void,
+    data_offer: *mut wl_data_offer,
+    mime_type: *const c_char,
+) {
+    if data.is_null() || data_offer.is_null() || mime_type.is_null() {
+        return;
+    }
+    let display: &mut WaylandPayload = &mut *(data as *mut _);
+    if display.clipboard.pending_offer != Some(data_offer) {
+        display.clipboard.pending_offer = Some(data_offer);
+        display.clipboard.pending_mime_mask = 0;
+    }
+    let flag = match CStr::from_ptr(mime_type).to_bytes() {
+        b"text/plain;charset=utf-8" => MIME_TEXT_PLAIN_UTF8,
+        b"text/plain" => MIME_TEXT_PLAIN,
+        b"UTF8_STRING" => MIME_UTF8_STRING,
+        b"TEXT" => MIME_TEXT,
+        b"STRING" => MIME_STRING,
+        _ => 0,
+    };
+    display.clipboard.pending_mime_mask |= flag;
+}
 
 // new clipboard content is available
 // this could be fired at any time, so we just store the `data_offer` for later use
@@ -12,99 +51,134 @@ pub(super) unsafe extern "C" fn data_device_handle_selection(
 ) {
     let display: &mut WaylandPayload = &mut *(data as *mut _);
     assert_eq!(data_device, display.data_device);
-    CLIPBOARD.get_mut().unwrap().data_offer = (!data_offer.is_null()).then_some(data_offer);
+    let new_offer = (!data_offer.is_null()).then_some(data_offer);
+    if let Some(old_offer) = display.clipboard.data_offer.take() {
+        if Some(old_offer) != new_offer {
+            wl_request!(display.client, old_offer, WL_DATA_OFFER_DESTROY);
+            (display.client.wl_proxy_destroy)(old_offer as _);
+        }
+    }
+    display.clipboard.data_offer = new_offer;
+    display.clipboard.offer_mime_mask = if new_offer.is_some()
+        && display.clipboard.pending_offer == new_offer
+    {
+        display.clipboard.pending_mime_mask
+    } else {
+        0
+    };
 }
 
-use std::sync::OnceLock;
-static mut CLIPBOARD: OnceLock<ClipboardContext> = OnceLock::new();
-
-// Contains the owned clipboard and the `data_source` (object in Wayland that indicates clipboard
-// ownership). There is a static instance `CLIPBOARD` available globally, initialized when creating
-// the `WaylandClipboard`.
-#[derive(Debug)]
-struct ClipboardContext {
-    display: *mut WaylandPayload,
+#[derive(Default, Debug)]
+pub(super) struct ClipboardContext {
     content: String,
     data_source: Option<*mut wl_data_source>,
     data_offer: Option<*mut wl_data_offer>,
+    offer_mime_mask: u8,
+    pending_offer: Option<*mut wl_data_offer>,
+    pending_mime_mask: u8,
 }
 
-impl ClipboardContext {
-    unsafe fn get_clipboard(&mut self, mime_type: &str) -> Option<Vec<u8>> {
-        self.data_offer.map(|data_offer| {
-            let display: &mut WaylandPayload = &mut *self.display;
-            let mime_type = std::ffi::CString::new(mime_type).unwrap();
-            display
-                .client
-                .data_offer_receive(display.display, data_offer, mime_type.as_ptr())
-        })?
+impl WaylandPayload {
+    unsafe fn clipboard_get(&mut self) -> Option<String> {
+        if self.clipboard.data_source.is_some() {
+            return Some(self.clipboard.content.clone());
+        }
+        let data_offer = self.clipboard.data_offer?;
+        let mask = self.clipboard.offer_mime_mask;
+        let mime: &CStr = if mask & MIME_TEXT_PLAIN_UTF8 != 0 {
+            c"text/plain;charset=utf-8"
+        } else if mask & MIME_TEXT_PLAIN != 0 {
+            c"text/plain"
+        } else if mask & MIME_UTF8_STRING != 0 {
+            c"UTF8_STRING"
+        } else if mask & MIME_TEXT != 0 {
+            c"TEXT"
+        } else if mask & MIME_STRING != 0 {
+            c"STRING"
+        } else {
+            c"text/plain;charset=utf-8"
+        };
+        let bytes = self
+            .client
+            .data_offer_receive(self.display, data_offer, mime.as_ptr())?;
+        String::from_utf8(bytes).ok()
     }
 
-    unsafe fn set(&mut self, data: &str) {
-        self.content.clear();
-        self.content.push_str(data);
-        let display: &mut WaylandPayload = &mut *self.display;
+    unsafe fn clipboard_set(&mut self, data: &str) -> Result<(), ClipboardError> {
         // Wayland requires that only the window with focus can set the clipboard
-        if let Some(serial) = display.keyboard_context.enter_serial {
-            let data_source = self.new_data_source();
-            // only support copying utf8 strings
-            let mime_type = std::ffi::CString::new("UTF8_STRING").unwrap();
+        let serial = self
+            .keyboard_context
+            .enter_serial
+            .ok_or(ClipboardError::Unavailable)?;
+
+        self.clipboard.content.clear();
+        self.clipboard.content.push_str(data);
+
+        let data_source = self.new_clipboard_data_source()?;
+        for mime in OFFERED_MIMES {
             wl_request!(
-                display.client,
+                self.client,
                 data_source,
                 WL_DATA_SOURCE_OFFER,
-                mime_type.as_ptr()
-            );
-            wl_request!(
-                display.client,
-                display.data_device,
-                WL_DATA_DEVICE_SET_SELECTION,
-                data_source,
-                serial
+                mime.as_ptr()
             );
         }
+        wl_request!(
+            self.client,
+            self.data_device,
+            WL_DATA_DEVICE_SET_SELECTION,
+            data_source,
+            serial
+        );
+        (self.client.wl_display_flush)(self.display);
+        Ok(())
     }
 
-    unsafe fn respond_to_clipboard_request(&mut self, mime_type: &str, fd: c_int) {
-        #![allow(clippy::single_match)]
+    unsafe fn respond_to_clipboard_request(&mut self, mime_type: &[u8], fd: c_int) {
         match mime_type {
-            "UTF8_STRING" => {
-                libc::write(fd, self.content.as_ptr() as _, self.content.len());
+            b"text/plain;charset=utf-8"
+            | b"text/plain"
+            | b"UTF8_STRING"
+            | b"TEXT"
+            | b"STRING" => {
+                libc::write(
+                    fd,
+                    self.clipboard.content.as_ptr() as _,
+                    self.clipboard.content.len(),
+                );
             }
             _ => {}
         }
         libc::close(fd);
     }
 
-    unsafe fn destroy_data_source(&mut self) {
-        // since the data_source is constructed by us, we need to dispose of it properly
-        if let Some(data_source) = self.data_source {
-            let display: &mut WaylandPayload = &mut *self.display;
-            wl_request!(display.client, data_source, WL_DATA_SOURCE_DESTROY);
-            (display.client.wl_proxy_destroy)(data_source as _);
-            self.data_source = None;
+    unsafe fn destroy_clipboard_data_source(&mut self) {
+        if let Some(data_source) = self.clipboard.data_source.take() {
+            wl_request!(self.client, data_source, WL_DATA_SOURCE_DESTROY);
+            (self.client.wl_proxy_destroy)(data_source as _);
         }
     }
 
-    unsafe fn new_data_source(&mut self) -> *mut wl_data_source {
-        self.destroy_data_source();
-        let display: &mut WaylandPayload = &mut *self.display;
+    unsafe fn new_clipboard_data_source(&mut self) -> Result<*mut wl_data_source, ClipboardError> {
+        self.destroy_clipboard_data_source();
         let data_source: *mut wl_data_source = wl_request_constructor!(
-            display.client,
-            display.data_device_manager,
+            self.client,
+            self.data_device_manager,
             WL_DATA_DEVICE_MANAGER_CREATE_DATA_SOURCE,
-            display.client.wl_data_source_interface,
+            self.client.wl_data_source_interface,
         );
-        assert!(!data_source.is_null());
+        if data_source.is_null() {
+            return Err(ClipboardError::OperationFailed);
+        }
         DATA_SOURCE_LISTENER.send = data_source_handle_send;
         DATA_SOURCE_LISTENER.cancelled = data_source_handle_cancelled;
-        (display.client.wl_proxy_add_listener)(
+        (self.client.wl_proxy_add_listener)(
             data_source as _,
             &DATA_SOURCE_LISTENER as *const _ as _,
-            self.display as *const _ as _,
+            self as *mut _ as _,
         );
-        self.data_source = Some(data_source);
-        data_source
+        self.clipboard.data_source = Some(data_source);
+        Ok(data_source)
     }
 }
 
@@ -112,56 +186,47 @@ static mut DATA_SOURCE_LISTENER: wl_data_source_listener = wl_data_source_listen
 
 // some app (could be ourself) is requesting the owned clipboard
 unsafe extern "C" fn data_source_handle_send(
-    _data: *mut c_void,
+    data: *mut c_void,
     data_source: *mut wl_data_source,
     mime_type: *const c_char,
     fd: c_int,
 ) {
-    let mime_type = core::ffi::CStr::from_ptr(mime_type).to_str().unwrap();
-    let ctx = CLIPBOARD.get_mut().unwrap();
-    assert!(ctx.data_source == Some(data_source));
-    ctx.respond_to_clipboard_request(mime_type, fd);
+    let display: &mut WaylandPayload = &mut *(data as *mut _);
+    if display.clipboard.data_source == Some(data_source) && !mime_type.is_null() {
+        let mime_bytes = CStr::from_ptr(mime_type).to_bytes();
+        display.respond_to_clipboard_request(mime_bytes, fd);
+    } else {
+        libc::close(fd);
+    }
 }
 
 // the owned clipboard has been replaced by some other app
 unsafe extern "C" fn data_source_handle_cancelled(
-    _data: *mut c_void,
+    data: *mut c_void,
     data_source: *mut wl_data_source,
 ) {
-    let ctx = CLIPBOARD.get_mut().unwrap();
-    assert!(ctx.data_source == Some(data_source));
-    ctx.destroy_data_source();
+    let display: &mut WaylandPayload = &mut *(data as *mut _);
+    if display.clipboard.data_source == Some(data_source) {
+        display.destroy_clipboard_data_source();
+    }
 }
 
-pub struct WaylandClipboard {}
+pub struct WaylandClipboard {
+    display: *mut WaylandPayload,
+}
 unsafe impl Send for WaylandClipboard {}
 unsafe impl Sync for WaylandClipboard {}
 
 impl WaylandClipboard {
     pub(super) fn new(display: *mut WaylandPayload) -> Self {
-        // initialize the global context
-        unsafe {
-            CLIPBOARD
-                .set(ClipboardContext {
-                    display,
-                    content: String::new(),
-                    data_source: None,
-                    data_offer: None,
-                })
-                .unwrap();
-        }
-        WaylandClipboard {}
+        WaylandClipboard { display }
     }
-}
 
-impl crate::native::Clipboard for WaylandClipboard {
-    fn get(&mut self) -> Option<String> {
-        let bytes = unsafe { CLIPBOARD.get_mut().unwrap().get_clipboard("UTF8_STRING")? };
-        Some(std::str::from_utf8(&bytes).ok()?.to_string())
+    pub fn get(&mut self) -> Option<String> {
+        unsafe { (&mut *self.display).clipboard_get() }
     }
-    fn set(&mut self, data: &str) {
-        unsafe {
-            CLIPBOARD.get_mut().unwrap().set(data);
-        }
+
+    pub fn set(&mut self, data: &str) -> Result<(), ClipboardError> {
+        unsafe { (&mut *self.display).clipboard_set(data) }
     }
 }

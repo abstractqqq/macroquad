@@ -21,15 +21,60 @@ pub mod raw_gl {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum IndexType {
+    Byte = 1,
+    Short = 2,
+    Int = 4,
+}
+
+impl IndexType {
+    fn from_element_size(element_size: usize) -> Self {
+        match element_size {
+            1 => IndexType::Byte,
+            2 => IndexType::Short,
+            4 => IndexType::Int,
+            _ => panic!("unsupported index buffer dimension"),
+        }
+    }
+
+    fn to_gl(self) -> GLenum {
+        match self {
+            IndexType::Byte => GL_UNSIGNED_BYTE,
+            IndexType::Short => GL_UNSIGNED_SHORT,
+            IndexType::Int => GL_UNSIGNED_INT,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum GlBufferType {
+    VertexBuffer,
+    IndexBuffer(IndexType),
+}
+
+impl GlBufferType {
+    fn gl_target(self) -> GLenum {
+        match self {
+            GlBufferType::VertexBuffer => GL_ARRAY_BUFFER,
+            GlBufferType::IndexBuffer(_) => GL_ELEMENT_ARRAY_BUFFER,
+        }
+    }
+
+    fn index_type(self) -> Option<IndexType> {
+        match self {
+            GlBufferType::VertexBuffer => None,
+            GlBufferType::IndexBuffer(index_type) => Some(index_type),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 struct Buffer {
     gl_buf: GLuint,
-    buffer_type: BufferType,
+    buffer_type: GlBufferType,
     size: usize,
-    // Dimension of the indices for this buffer,
-    // used only as a type argument for glDrawElements and can be
-    // 1, 2 or 4
-    index_type: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -1423,21 +1468,19 @@ impl RenderingBackend for GlContext {
             BufferSource::Slice(data) => (data.size, data.element_size),
             BufferSource::Empty { size, element_size } => (*size, *element_size),
         };
-        let index_type = match type_ {
-            BufferType::IndexBuffer
-                if element_size == 1 || element_size == 2 || element_size == 4 =>
-            {
-                Some(element_size as u32)
+        let buffer_type = match type_ {
+            BufferType::IndexBuffer => {
+                GlBufferType::IndexBuffer(IndexType::from_element_size(element_size))
             }
-            BufferType::IndexBuffer => panic!("unsupported index buffer dimension"),
-            BufferType::VertexBuffer => None,
+            BufferType::VertexBuffer => GlBufferType::VertexBuffer,
         };
         let mut gl_buf: u32 = 0;
 
         unsafe {
             glGenBuffers(1, &mut gl_buf as *mut _);
             self.cache.store_buffer_binding(gl_target);
-            self.cache.bind_buffer(gl_target, gl_buf, index_type);
+            self.cache
+                .bind_buffer(gl_target, gl_buf, buffer_type.index_type());
 
             let ptr = match data {
                 BufferSource::Slice(data) => {
@@ -1452,9 +1495,8 @@ impl RenderingBackend for GlContext {
 
         let buffer = Buffer {
             gl_buf,
-            buffer_type: type_,
+            buffer_type,
             size,
-            index_type,
         };
 
         BufferId(self.buffers.add(buffer))
@@ -1468,19 +1510,18 @@ impl RenderingBackend for GlContext {
         debug_assert!(data.is_slice);
         let buffer = &self.buffers[buffer.0];
 
-        if matches!(buffer.buffer_type, BufferType::IndexBuffer) {
-            assert!(buffer.index_type.is_some());
-            assert!(data.element_size as u32 == buffer.index_type.unwrap());
-        };
+        if let GlBufferType::IndexBuffer(index_type) = buffer.buffer_type {
+            assert_eq!(data.element_size, index_type as usize);
+        }
 
         let size = data.size;
 
         assert!(size <= buffer.size);
 
-        let gl_target = gl_buffer_target(&buffer.buffer_type);
+        let gl_target = buffer.buffer_type.gl_target();
         self.cache.store_buffer_binding(gl_target);
         self.cache
-            .bind_buffer(gl_target, buffer.gl_buf, buffer.index_type);
+            .bind_buffer(gl_target, buffer.gl_buf, buffer.buffer_type.index_type());
         unsafe { glBufferSubData(gl_target, 0, size as _, data.ptr as _) };
         self.cache.restore_buffer_binding(gl_target);
     }
@@ -1554,7 +1595,7 @@ impl RenderingBackend for GlContext {
         self.cache.bind_buffer(
             GL_ELEMENT_ARRAY_BUFFER,
             index_buf.gl_buf,
-            index_buf.index_type,
+            index_buf.buffer_type.index_type(),
         );
 
         for attr_index in 0..MAX_VERTEX_ATTRIBUTES {
@@ -1574,8 +1615,11 @@ impl RenderingBackend for GlContext {
                 if cached_attr.map_or(true, |cached_attr| {
                     attribute != cached_attr.attribute || cached_attr.gl_vbuf != vb.gl_buf
                 }) {
-                    self.cache
-                        .bind_buffer(GL_ARRAY_BUFFER, vb.gl_buf, vb.index_type);
+                    self.cache.bind_buffer(
+                        GL_ARRAY_BUFFER,
+                        vb.gl_buf,
+                        vb.buffer_type.index_type(),
+                    );
 
                     unsafe {
                         match attribute.type_ {
@@ -1826,12 +1870,7 @@ impl RenderingBackend for GlContext {
             glDrawElementsInstanced(
                 primitive_type,
                 num_elements,
-                match index_type {
-                    1 => GL_UNSIGNED_BYTE,
-                    2 => GL_UNSIGNED_SHORT,
-                    4 => GL_UNSIGNED_INT,
-                    _ => panic!("Unsupported index buffer type!"),
-                },
+                index_type.to_gl(),
                 (index_type as i32 * base_element) as *mut _,
                 num_instances,
             );

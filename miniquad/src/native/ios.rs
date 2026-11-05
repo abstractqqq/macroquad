@@ -537,12 +537,14 @@ unsafe fn create_metal_view(screen_rect: NSRect, sample_count: i32, _high_dpi: b
     }
 }
 
-struct IosClipboard;
-impl crate::native::Clipboard for IosClipboard {
-    fn get(&mut self) -> Option<String> {
+pub struct IosClipboard;
+impl IosClipboard {
+    pub fn get(&mut self) -> Option<String> {
         None
     }
-    fn set(&mut self, _data: &str) {}
+    pub fn set(&mut self, _data: &str) -> Result<(), crate::native::ClipboardError> {
+        Err(crate::native::ClipboardError::Unsupported)
+    }
 }
 
 pub fn define_app_delegate() -> *const Class {
@@ -621,7 +623,7 @@ pub fn define_app_delegate() -> *const Class {
 
             MESSAGES_TX.with(move |messages_tx| *messages_tx.borrow_mut() = Some(tx));
 
-            let clipboard = Box::new(IosClipboard);
+            let clipboard = IosClipboard;
             let (tx, requests_rx) = std::sync::mpsc::channel();
             crate::set_display(NativeDisplayData {
                 high_dpi: conf.high_dpi,

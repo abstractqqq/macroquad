@@ -89,7 +89,7 @@ extern "system" {
 // IME Association flags
 const IACE_CHILDREN: DWORD = 0x0001;
 
-mod clipboard;
+pub mod clipboard;
 mod keycodes;
 mod libopengl32;
 mod wgl;
@@ -864,30 +864,9 @@ unsafe fn create_win_icon_from_image(width: u32, height: u32, colors: &[u8]) -> 
 }
 
 unsafe fn set_icon(wnd: HWND, icon: &Icon) {
-    let big_icon_w = GetSystemMetrics(SM_CXICON);
-    let big_icon_h = GetSystemMetrics(SM_CYICON);
-    let small_icon_w = GetSystemMetrics(SM_CXSMICON);
-    let small_icon_h = GetSystemMetrics(SM_CYSMICON);
-
-    let big_icon = if big_icon_w * big_icon_h >= 64 * 64 {
-        (&icon.big[..], 64, 64)
-    } else {
-        (&icon.medium[..], 32, 32)
-    };
-
-    let small_icon = if small_icon_w * small_icon_h <= 16 * 16 {
-        (&icon.small[..], 16, 16)
-    } else {
-        (&icon.medium[..], 32, 32)
-    };
-
-    let big_icon = create_win_icon_from_image(big_icon.1, big_icon.2, big_icon.0);
-    let small_icon = create_win_icon_from_image(small_icon.1, small_icon.2, small_icon.0);
-    if let Some(icon) = big_icon {
-        SendMessageW(wnd, WM_SETICON, ICON_BIG as _, icon as LPARAM);
-    }
-    if let Some(icon) = small_icon {
-        SendMessageW(wnd, WM_SETICON, ICON_SMALL as _, icon as LPARAM);
+    if let Some(hicon) = create_win_icon_from_image(64, 64, icon.0) {
+        SendMessageW(wnd, WM_SETICON, ICON_BIG as _, hicon as LPARAM);
+        SendMessageW(wnd, WM_SETICON, ICON_SMALL as _, hicon as LPARAM);
     }
 }
 
@@ -1198,7 +1177,7 @@ where
         display.init_dpi(conf.high_dpi);
 
         let (tx, rx) = std::sync::mpsc::channel();
-        let clipboard = Box::new(clipboard::WindowsClipboard::new());
+        let clipboard = clipboard::WindowsClipboard::new();
         crate::set_display(NativeDisplayData {
             high_dpi: conf.high_dpi,
             dpi_scale: display.window_scale,

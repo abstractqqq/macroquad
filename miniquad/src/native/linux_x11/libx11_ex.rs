@@ -109,34 +109,25 @@ impl LibX11 {
         window: Window,
         icon: &crate::conf::Icon,
     ) {
-        let bytes_length = (icon.small.len() + icon.medium.len() + icon.big.len()) / 4 + 3 * 2;
+        const WIDTH: usize = 64;
+        const HEIGHT: usize = 64;
+        let bytes_length = WIDTH * HEIGHT + 2;
 
         // "This is an array of 32bit packed CARDINAL ARGB" (c) freedesktop
         // While, in fact, X11 expect this to be 64bit on 64bit systems, which is proved
         // by quite a few "unsigned long icon[]" I've seen in quite a few real-life programs.
         // Leaving this comment nn case of icon-related bugs in the future.
         let mut icon_bytes: Vec<usize> = vec![0; bytes_length];
-        let icons = [
-            (16, &icon.small[..]),
-            (32, &icon.medium[..]),
-            (64, &icon.big[..]),
-        ];
+        icon_bytes[0] = WIDTH;
+        icon_bytes[1] = HEIGHT;
 
-        {
-            let mut target = icon_bytes.iter_mut();
-            for (dim, pixels) in icons {
-                *target.next().unwrap() = dim;
-                *target.next().unwrap() = dim;
-                for pixels in pixels.chunks(4) {
-                    let r = pixels[0] as u32;
-                    let g = pixels[1] as u32;
-                    let b = pixels[2] as u32;
-                    let a = pixels[3] as u32;
+        for (pixel, target) in icon.0.chunks_exact(4).zip(icon_bytes[2..].iter_mut()) {
+            let r = pixel[0] as u32;
+            let g = pixel[1] as u32;
+            let b = pixel[2] as u32;
+            let a = pixel[3] as u32;
 
-                    *target.next().unwrap() =
-                        ((r << 16) | (g << 8) | (b << 0) | (a << 24)) as usize;
-                }
-            }
+            *target = ((r << 16) | (g << 8) | (b << 0) | (a << 24)) as usize;
         }
 
         (self.XChangeProperty)(

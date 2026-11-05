@@ -4,7 +4,7 @@ mod libwayland_client;
 mod libwayland_egl;
 mod libxkbcommon;
 
-mod clipboard;
+pub mod clipboard;
 mod decorations;
 mod drag_n_drop;
 mod extensions;
@@ -58,11 +58,13 @@ struct WaylandPayload {
     touch_positions: HashMap<core::ffi::c_int, (f32, f32)>,
     focused_window: *mut wl_surface,
     decoration_manager: *mut extensions::xdg_decoration::zxdg_decoration_manager_v1,
+    icon_manager: *mut extensions::xdg_icon::xdg_toplevel_icon_manager_v1,
     decorations: decorations::Decorations,
 
     events: Vec<WaylandEvent>,
     keyboard_context: KeyboardContext,
     drag_n_drop: drag_n_drop::WaylandDnD,
+    clipboard: clipboard::ClipboardContext,
     update_requested: bool,
 }
 
@@ -196,6 +198,50 @@ impl WaylandPayload {
                 self.xdg_toplevel,
                 extensions::xdg_shell::xdg_toplevel::unset_fullscreen
             );
+        }
+    }
+    unsafe fn set_icon(&mut self, icon: &crate::conf::Icon) {
+        if self.icon_manager.is_null() || self.shm.is_null() || self.xdg_toplevel.is_null() {
+            return;
+        }
+
+        let mut argb = [0u8; 64 * 64 * 4];
+        for (src, dst) in icon.0.chunks_exact(4).zip(argb.chunks_exact_mut(4)) {
+            let a = src[3] as u16;
+            dst[0] = ((src[2] as u16 * a) / 255) as u8;
+            dst[1] = ((src[1] as u16 * a) / 255) as u8;
+            dst[2] = ((src[0] as u16 * a) / 255) as u8;
+            dst[3] = src[3];
+        }
+
+        let buffer = shm::create_shm_buffer(&mut self.client, self.shm, 64, 64, &argb);
+        let toplevel_icon: *mut extensions::xdg_icon::xdg_toplevel_icon_v1 = wl_request_constructor!(
+            self.client,
+            self.icon_manager,
+            extensions::xdg_icon::xdg_toplevel_icon_manager_v1::create_icon,
+            &extensions::xdg_icon::xdg_toplevel_icon_v1_interface
+        );
+        if !toplevel_icon.is_null() {
+            wl_request!(
+                self.client,
+                toplevel_icon,
+                extensions::xdg_icon::xdg_toplevel_icon_v1::add_buffer,
+                buffer,
+                1
+            );
+            wl_request!(
+                self.client,
+                self.icon_manager,
+                extensions::xdg_icon::xdg_toplevel_icon_manager_v1::set_icon,
+                self.xdg_toplevel,
+                toplevel_icon
+            );
+            wl_request!(
+                self.client,
+                toplevel_icon,
+                extensions::xdg_icon::xdg_toplevel_icon_v1::destroy
+            );
+            (self.client.wl_proxy_destroy)(toplevel_icon as _);
         }
     }
 }
@@ -458,6 +504,8 @@ static mut DATA_DEVICE_LISTENER: wl_data_device_listener = wl_data_device_listen
 static mut DATA_OFFER_LISTENER: wl_data_offer_listener = wl_data_offer_listener::dummy();
 static mut XDG_WM_BASE_LISTENER: extensions::xdg_shell::xdg_wm_base_listener =
     extensions::xdg_shell::xdg_wm_base_listener::dummy();
+static mut XDG_ICON_MANAGER_LISTENER: extensions::xdg_icon::xdg_toplevel_icon_manager_v1_listener =
+    extensions::xdg_icon::xdg_toplevel_icon_manager_v1_listener::dummy();
 static mut RELATIVE_POINTER_LISTENER: extensions::cursor::zwp_relative_pointer_v1_listener =
     extensions::cursor::zwp_relative_pointer_v1_listener::dummy();
 
@@ -949,6 +997,20 @@ unsafe extern "C" fn registry_add_object(
                 1,
             ) as _;
         }
+        "xdg_toplevel_icon_manager_v1" => {
+            display.icon_manager = display.client.wl_registry_bind(
+                registry,
+                name,
+                &extensions::xdg_icon::xdg_toplevel_icon_manager_v1_interface,
+                1,
+            ) as _;
+            assert!(!display.icon_manager.is_null());
+            (display.client.wl_proxy_add_listener)(
+                display.icon_manager as _,
+                &XDG_ICON_MANAGER_LISTENER as *const _ as _,
+                display as *mut _ as _,
+            );
+        }
         "wp_viewporter" => {
             display.viewporter = display.client.wl_registry_bind(
                 registry,
@@ -1039,6 +1101,7 @@ unsafe extern "C" fn data_device_handle_data_offer(
     data_device: *mut wl_data_device,
     data_offer: *mut wl_data_offer,
 ) {
+    DATA_OFFER_LISTENER.offer = clipboard::data_offer_handle_offer;
     DATA_OFFER_LISTENER.source_actions = drag_n_drop::data_offer_handle_source_actions;
     let display: &mut WaylandPayload = &mut *(data as *mut _);
     assert_eq!(data_device, display.data_device);
@@ -1100,11 +1163,13 @@ where
             touch_positions: HashMap::new(),
             focused_window: std::ptr::null_mut(),
             decoration_manager: std::ptr::null_mut(),
+            icon_manager: std::ptr::null_mut(),
             decorations: decorations::Decorations::None,
             events: Vec::new(),
             pointer_context: PointerContext::new(),
             keyboard_context: KeyboardContext::new(),
             drag_n_drop: Default::default(),
+            clipboard: Default::default(),
             update_requested: true,
         };
 
@@ -1117,7 +1182,9 @@ where
         );
 
         let (tx, rx) = std::sync::mpsc::channel();
-        let clipboard = Box::new(clipboard::WaylandClipboard::new(&mut display as *mut _));
+        let clipboard = crate::native::PlatformClipboard::Wayland(
+            clipboard::WaylandClipboard::new(&mut display as *mut _),
+        );
         crate::set_display(NativeDisplayData {
             high_dpi: conf.high_dpi,
             dpi_scale: 1., // At this point dpi_scale is not known to us
@@ -1196,6 +1263,10 @@ where
             extensions::xdg_shell::xdg_toplevel::set_app_id,
             wm_class.as_ptr()
         );
+
+        if let Some(icon) = &conf.icon {
+            display.set_icon(icon);
+        }
 
         if !conf.window_resizable {
             for set_size in [

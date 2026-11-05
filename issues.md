@@ -54,7 +54,18 @@ This document tracks the performance, memory, and architectural optimizations co
 - **Zero-`Vec<char>` Shader Preprocessor ([`src/material/mod.rs`](file:///home/tq/Projects/macroquad/src/material/mod.rs#L168-L205))**:
   - Rewrote `preprocess_shader` to operate directly on UTF-8 `&str` lines with a fast path returning `source.to_string()` when `!source.contains("#include")`.
 
-### 5. Previously Completed GL & Linux Backend Fixes in `miniquad`
+### 5. Cross-Platform Clipboard Refinement & Removal of `Box<dyn Clipboard>`
+- **Concrete `PlatformClipboard` & `Result<(), ClipboardError>` API ([`miniquad/src/native.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native.rs#L83-L147), [`miniquad/src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L354-L366), [`src/window/mod.rs`](file:///home/tq/Projects/macroquad/src/window/mod.rs#L89-L97))**:
+  - Replaced `Box<dyn Clipboard>` and `trait Clipboard` with an inline `PlatformClipboard` (`enum PlatformClipboard { X11(X11Clipboard), Wayland(WaylandClipboard) }` on Linux and zero-sized concrete types on Windows, macOS, iOS, Android, and WASM).
+  - Changed `clipboard_set(data: &str) -> Result<(), ClipboardError>` so callers receive explicit error feedback, and exposed `clipboard_get`, `clipboard_set`, and `ClipboardError` in `rayquad::window` / `rayquad::prelude`.
+- **Platform Clipboard Fixes**:
+  - **Linux X11 ([`miniquad/src/native/linux_x11/clipboard.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native/linux_x11/clipboard.rs))**: Added `TARGETS` and standard text atom negotiation, replaced the unbounded `XNextEvent` loop (which swallowed input events and hung if no owner responded) with `XCheckTypedWindowEvent` and a bounded timeout, added a self-paste fast path via `XGetSelectionOwner`, and removed `static mut MESSAGE`.
+  - **Linux Wayland ([`miniquad/src/native/linux_wayland/clipboard.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native/linux_wayland/clipboard.rs))**: Added standard Wayland MIME type negotiation (`text/plain;charset=utf-8`, `text/plain`, `UTF8_STRING`, `TEXT`, `STRING`), moved `ClipboardContext` into `WaylandPayload` (eliminating `static mut CLIPBOARD`), added a self-paste fast path, destroyed replaced `wl_data_offer` proxies, and fixed the pipe `fds[0]` leak on read errors.
+  - **macOS ([`miniquad/src/native/macos.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native/macos.rs#L1055-L1094))**: Wired the `NSPasteboard` implementation into `MacosClipboard`.
+  - **Windows ([`miniquad/src/native/windows/clipboard.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native/windows/clipboard.rs))**: Fixed `GlobalSize` byte-to-`u16` length calculation, added `GlobalUnlock` / `GlobalFree` cleanup, and eliminated intermediate `Vec<u16>` and `format!` allocations.
+  - **WASM ([`miniquad/src/native/wasm.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native/wasm.rs#L197-L216))**: Updated the local clipboard cache on `set()` so subsequent `get()` calls return the newly set text.
+
+### 6. Previously Completed GL & Linux Backend Fixes in `miniquad`
 - **`ResourceManager<T>` generational/free-list storage** in [`miniquad/src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L29-L78) and [`miniquad/src/graphics/gl.rs`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/gl.rs#L515-L520) preventing unbounded vector growth and GPU resource leaks (`glDetachShader` + `glDeleteShader`, `glDeleteBuffers`, `glDeleteFramebuffers`, `glDeleteProgram`, cached `readback_fbo`).
 - **Linux X11 & Wayland**: `foldhash` cursor/touch maps, 256-entry X11 keycode lookup table, cached X11 cursor state, cached Wayland XKB modifier indices, and fixed Wayland keyboard repeat timer resource leak.
 
@@ -67,25 +78,19 @@ This document tracks the performance, memory, and architectural optimizations co
 - **Status**: All per-frame/hot-path locks from `rayquad` have been eliminated by caching `screen_width`, `screen_height`, `dpi_scale`, and `blocking_event_loop` in `rayquad::Context`.
 - **Remaining Opportunity**: Inside `miniquad` itself, `OnceLock<Mutex<NativeDisplayData>>` and `mpsc::Sender<Request>` can optionally be replaced with `thread_local! { RefCell<Option<NativeDisplayData>> }` and a plain `Vec<Request>` since `miniquad`'s event loop is single-threaded.
 
-### 2. `Box<dyn Clipboard>` in `NativeDisplayData` (Cross-Platform / Linux)
-- **Location**: [`miniquad/src/native.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native.rs#L29) (`pub clipboard: Box<dyn Clipboard>`)
-- **Problem**: Every platform except Linux has only a single clipboard implementation, and Linux has two (`X11Clipboard` and `WaylandClipboard`), yet `NativeDisplayData` boxes it as a trait object.
-- **Proposed Fix**:
-  - Replace `Box<dyn Clipboard>` with a platform-specific concrete `PlatformClipboard` type (and on Linux, `pub enum LinuxClipboard { X11(X11Clipboard), Wayland(WaylandClipboard) }`).
-
-### 3. `Box<dyn Fn(Request) + Send>` on Android in `NativeDisplayData`
-- **Location**: [`miniquad/src/native.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native.rs#L35), [`miniquad/src/native/android.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native/android.rs#L406)
-- **Problem**: On Android, `native_requests` is typed as `Box<dyn Fn(Request) + Send>`, even though the closure in `android.rs` is non-capturing (`Box::new(process_request)`).
+### 2. `Box<dyn Fn(Request) + Send>` on Android in `NativeDisplayData`
+- **Location**: [`miniquad/src/native.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native.rs#L20), [`miniquad/src/native/android.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native/android.rs#L512)
+- **Problem**: On Android, `native_requests` is typed as `Box<dyn Fn(Request) + Send>`, even though the closure in `android.rs` can be a non-capturing function.
 - **Proposed Fix**:
   - Change the field type on Android to a plain function pointer `pub native_requests: fn(Request)` and initialize it with `native_requests: process_request`.
 
-### 4. Apple Metal Backend (`miniquad/src/graphics/metal.rs`)
+### 3. Apple Metal Backend (`miniquad/src/graphics/metal.rs`)
 - **Synchronous `waitUntilCompleted` Pipeline Stall**: [`commit_frame`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/metal.rs#L1185) calls `[commandBuffer waitUntilCompleted]` after presenting the drawable, serializing CPU and GPU execution and preventing triple-buffered pipelining. Should use a 3-slot `dispatch_semaphore_t` signaled via `addCompletedHandler:`.
 - **Uniform Buffer Frame Index Rotation Per Draw Call**: [`apply_uniforms_from_bytes`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/metal.rs#L1135) increments `current_frame_index = (current_frame_index + 1) % 3` on every draw call instead of once per frame in `commit_frame()`.
 - **Buffer Update `didModifyRange` Bug**: [`buffer_update`](file:///home/tq/Projects/macroquad/miniquad/src/graphics/metal.rs#L747) copies into `buffer.raw[buffer.next_value]` without advancing `next_value` on subsequent mid-frame updates, and on macOS calls `didModifyRange` with `NSRange::new(0, data.size)` instead of `NSRange::new(0, (data.size * data.element_size) as u64)`.
 - **Resource Leaks**: `buffers`, `textures`, `passes`, `shaders`, and `pipelines` in `MetalContext` use append-only `Vec`s instead of `ResourceManager`, and `delete_shader` / `delete_pipeline` are no-ops.
 
-### 5. Android Backend (`miniquad/src/native/android.rs`)
+### 4. Android Backend (`miniquad/src/native/android.rs`)
 - **Asset Loading Memory Leak & Double Copy**: [`load_asset`](file:///home/tq/Projects/macroquad/miniquad/src/native/android.rs#L655-L674) allocates a buffer via `libc::malloc`, reads into it, copies it into a Rust `Vec<u8>`, and never calls `libc::free(buf)`. Should read directly into a pre-sized `Vec<u8>` and drop the `malloc`.
 - **Background Busy-Wait Spin Loop**: In [`MainThread::next_event`](file:///home/tq/Projects/macroquad/miniquad/src/native/android.rs#L207-L234), when the app is backgrounded (`SurfaceDestroyed`), the loop spins at 100% CPU calling `thread::yield_now()` instead of blocking on `rx.recv()` or `Condvar`.
 - **Uncached JNI Lookups**: [`attach_jni_env`](file:///home/tq/Projects/macroquad/miniquad/src/native/android.rs#L533-L547) calls `GetObjectClass` and `GetMethodID` on every clipboard or keyboard request instead of caching method IDs at startup.

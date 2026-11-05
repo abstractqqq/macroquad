@@ -83,7 +83,7 @@ where
     let w = unsafe { canvas_width() as _ };
     let h = unsafe { canvas_height() as _ };
     let dpi_scale = unsafe { dpi_scale() };
-    let clipboard = Box::new(Clipboard);
+    let clipboard = WasmClipboard;
     crate::set_display(NativeDisplayData {
         blocking_event_loop: conf.platform.blocking_event_loop,
         dpi_scale,
@@ -195,9 +195,9 @@ pub extern "C" fn allocate_vec_u8(len: usize) -> *mut u8 {
 }
 
 static CLIPBOARD: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-struct Clipboard;
-impl crate::native::Clipboard for Clipboard {
-    fn get(&mut self) -> Option<String> {
+pub struct WasmClipboard;
+impl WasmClipboard {
+    pub fn get(&mut self) -> Option<String> {
         CLIPBOARD
             .get_or_init(|| Mutex::new(None))
             .lock()
@@ -205,10 +205,13 @@ impl crate::native::Clipboard for Clipboard {
             .clone()
     }
 
-    fn set(&mut self, data: &str) {
+    pub fn set(&mut self, data: &str) -> Result<(), crate::native::ClipboardError> {
         let len = data.len();
-        let data = std::ffi::CString::new(data).unwrap();
-        unsafe { sapp_set_clipboard(data.as_ptr(), len) };
+        let cdata = std::ffi::CString::new(data)
+            .map_err(|_| crate::native::ClipboardError::InvalidData)?;
+        unsafe { sapp_set_clipboard(cdata.as_ptr(), len) };
+        *CLIPBOARD.get_or_init(|| Mutex::new(None)).lock().unwrap() = Some(data.to_owned());
+        Ok(())
     }
 }
 

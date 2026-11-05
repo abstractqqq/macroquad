@@ -8,6 +8,7 @@ use crate::color::Color;
 pub use miniquad;
 
 pub use miniquad::conf::Conf;
+pub use miniquad::window::ClipboardError;
 
 /// Block execution until the next frame.
 #[must_use = "use `next_frame().await` to advance to the next frame"]
@@ -84,6 +85,16 @@ pub fn request_new_screen_size(width: f32, height: f32) {
 /// Toggle whether the window is fullscreen.
 pub fn set_fullscreen(fullscreen: bool) {
     miniquad::window::set_fullscreen(fullscreen);
+}
+
+/// Get the current OS clipboard text, if available.
+pub fn clipboard_get() -> Option<String> {
+    miniquad::window::clipboard_get()
+}
+
+/// Set the OS clipboard text.
+pub fn clipboard_set(data: &str) -> Result<(), ClipboardError> {
+    miniquad::window::clipboard_set(data)
 }
 
 /// With `set_panic_handler` set to a handler code, rayquad will use

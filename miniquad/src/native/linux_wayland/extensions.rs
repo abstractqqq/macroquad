@@ -4,6 +4,7 @@ pub mod cursor;
 pub mod libdecor;
 pub mod viewporter;
 pub mod xdg_decoration;
+pub mod xdg_icon;
 pub mod xdg_shell;
 
 #[macro_export]
@@ -113,5 +114,13 @@ pub mod wayland_protocol {
             (release, "5", ())
         ],
         [("capabilities", "u"), ("name", "2s")]
+    );
+
+    wayland_interface!(
+        wl_buffer_interface,
+        wl_buffer,
+        1,
+        [(destroy, "", ())],
+        [("release", "")]
     );
 }

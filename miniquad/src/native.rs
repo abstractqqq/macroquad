@@ -20,7 +20,7 @@ pub(crate) struct NativeDisplayData {
     pub native_requests: Box<dyn Fn(Request) + Send>,
     #[cfg(not(target_os = "android"))]
     pub native_requests: mpsc::Sender<Request>,
-    pub clipboard: Box<dyn Clipboard>,
+    pub clipboard: PlatformClipboard,
     pub dropped_files: DroppedFiles,
     pub blocking_event_loop: bool,
 
@@ -42,7 +42,7 @@ impl NativeDisplayData {
         screen_height: i32,
         #[cfg(target_os = "android")] native_requests: Box<dyn Fn(Request) + Send>,
         #[cfg(not(target_os = "android"))] native_requests: mpsc::Sender<Request>,
-        clipboard: Box<dyn Clipboard>,
+        clipboard: PlatformClipboard,
     ) -> NativeDisplayData {
         NativeDisplayData {
             screen_width,
@@ -80,10 +80,71 @@ pub(crate) enum Request {
     SetImeEnabled(bool),
 }
 
-pub trait Clipboard: Send + Sync {
-    fn get(&mut self) -> Option<String>;
-    fn set(&mut self, string: &str);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipboardError {
+    /// Clipboard is unavailable (e.g., window lacks focus on Wayland, or OS clipboard could not be opened).
+    Unavailable,
+    /// Failed to allocate OS clipboard memory.
+    AllocationFailed,
+    /// Input text could not be encoded for the platform clipboard (e.g., interior NUL byte).
+    InvalidData,
+    /// The OS rejected the clipboard operation.
+    OperationFailed,
+    /// Clipboard access is not supported on this platform.
+    Unsupported,
 }
+
+impl std::fmt::Display for ClipboardError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ClipboardError::Unavailable => write!(f, "clipboard is unavailable"),
+            ClipboardError::AllocationFailed => write!(f, "clipboard memory allocation failed"),
+            ClipboardError::InvalidData => write!(f, "invalid clipboard data"),
+            ClipboardError::OperationFailed => write!(f, "clipboard operation failed"),
+            ClipboardError::Unsupported => write!(f, "clipboard is not supported on this platform"),
+        }
+    }
+}
+
+impl std::error::Error for ClipboardError {}
+
+#[cfg(target_os = "linux")]
+pub enum PlatformClipboard {
+    X11(linux_x11::clipboard::X11Clipboard),
+    Wayland(linux_wayland::clipboard::WaylandClipboard),
+}
+
+#[cfg(target_os = "linux")]
+impl PlatformClipboard {
+    pub fn get(&mut self) -> Option<String> {
+        match self {
+            PlatformClipboard::X11(c) => c.get(),
+            PlatformClipboard::Wayland(c) => c.get(),
+        }
+    }
+
+    pub fn set(&mut self, data: &str) -> Result<(), ClipboardError> {
+        match self {
+            PlatformClipboard::X11(c) => c.set(data),
+            PlatformClipboard::Wayland(c) => c.set(data),
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub type PlatformClipboard = windows::clipboard::WindowsClipboard;
+
+#[cfg(target_os = "macos")]
+pub type PlatformClipboard = macos::MacosClipboard;
+
+#[cfg(any(target_os = "ios", target_os = "tvos"))]
+pub type PlatformClipboard = ios::IosClipboard;
+
+#[cfg(target_os = "android")]
+pub type PlatformClipboard = android::AndroidClipboard;
+
+#[cfg(target_arch = "wasm32")]
+pub type PlatformClipboard = wasm::WasmClipboard;
 
 pub mod module;
 

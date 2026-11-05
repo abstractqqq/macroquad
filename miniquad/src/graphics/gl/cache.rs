@@ -1,3 +1,4 @@
+use super::IndexType;
 use crate::graphics::*;
 
 #[derive(Clone, Copy, Debug, PartialEq, Default)]
@@ -27,12 +28,12 @@ pub struct CachedTexture {
 
 pub struct GlCache {
     pub stored_index_buffer: GLuint,
-    pub stored_index_type: Option<u32>,
+    pub stored_index_type: Option<IndexType>,
     pub stored_vertex_buffer: GLuint,
     pub stored_target: GLuint,
     pub stored_texture: GLuint,
     pub index_buffer: GLuint,
-    pub index_type: Option<u32>,
+    pub index_type: Option<IndexType>,
     pub vertex_buffer: GLuint,
     pub active_texture: usize,
     pub textures: [CachedTexture; MAX_SHADERSTAGE_IMAGES],
@@ -55,7 +56,7 @@ pub struct GlCache {
 }
 
 impl GlCache {
-    pub fn bind_buffer(&mut self, target: GLenum, buffer: GLuint, index_type: Option<u32>) {
+    pub fn bind_buffer(&mut self, target: GLenum, buffer: GLuint, index_type: Option<IndexType>) {
         if target == GL_ARRAY_BUFFER {
             if self.vertex_buffer != buffer {
                 self.vertex_buffer = buffer;

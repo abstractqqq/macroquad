@@ -17,6 +17,8 @@ This report summarizes the optimization and bug-hunting audit of the `miniquad` 
   - Overrode `texture_size(&self, texture: TextureId) -> (u32, u32)` in `GlContext` and `MetalContext` to read `(width, height)` directly without copying the full `Texture` / `TextureParams` struct.
 - **Single-Lock Dropped Files Take ([`src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L377-L383))**:
   - Added `window::take_dropped_files()` to move `dropped_files.paths` and `dropped_files.bytes` out of `NATIVE_DISPLAY` in a single lock acquisition with zero buffer clones.
+- **Concrete `PlatformClipboard` & `Result<(), ClipboardError>` ([`src/native.rs`](file:///home/tq/Projects/macroquad/miniquad/src/native.rs#L83-L147), [`src/lib.rs`](file:///home/tq/Projects/macroquad/miniquad/src/lib.rs#L354-L366))**:
+  - Replaced `Box<dyn Clipboard>` with an inline `PlatformClipboard` (`enum PlatformClipboard` on Linux, zero-sized concrete struct on other platforms), changed `clipboard_set` to return `Result<(), ClipboardError>`, and fixed X11 (`TARGETS` negotiation, `XCheckTypedWindowEvent` with timeout, self-paste, removed `static mut MESSAGE`), Wayland (`text/plain;charset=utf-8` MIME negotiation, removed `static mut CLIPBOARD`, self-paste, offer/fd leak fixes), macOS (`NSPasteboard`), Windows (`GlobalSize` / `GlobalUnlock`), and WASM clipboards.
 
 ### 2. OpenGL Backend (`src/graphics/gl.rs`, `src/graphics/gl/cache.rs`) & Resource Management (`src/lib.rs`)
 - **Compacted `VertexAttributeInternal` & Long-Lived `Box<[T]>` Slices**:
@@ -45,8 +47,7 @@ This report summarizes the optimization and bug-hunting audit of the `miniquad` 
 
 See [`../issues.md`](file:///home/tq/Projects/macroquad/issues.md) for full details on the remaining deferred items:
 1. **`NATIVE_DISPLAY` `Mutex` (`src/lib.rs`)**: All hot-path queries from `rayquad` are now served from `rayquad::Context`; `miniquad`'s internal `OnceLock<Mutex<NativeDisplayData>>` can optionally be converted to `thread_local!` + `RefCell` with a `Vec<Request>` queue.
-2. **`Box<dyn Clipboard>` (`src/native.rs`)**: Replace with a concrete platform clipboard type / Linux enum.
-3. **`Box<dyn Fn(Request) + Send>` on Android (`src/native.rs`)**: Replace with `fn(Request)`.
-4. **Apple Metal Backend (`src/graphics/metal.rs`)**: Replace synchronous `waitUntilCompleted` stall with semaphore-based triple buffering, rotate `current_frame_index` once per frame instead of per draw call, fix `didModifyRange` byte length, and use `ResourceManager` for Metal resources.
-5. **Android Backend (`src/native/android.rs`)**: Fix `libc::malloc` leak and double copy in `load_asset`, replace background `SurfaceDestroyed` busy-wait spin loop with blocking wait, and cache JNI method IDs.
+2. **`Box<dyn Fn(Request) + Send>` on Android (`src/native.rs`)**: Replace with `fn(Request)`.
+3. **Apple Metal Backend (`src/graphics/metal.rs`)**: Replace synchronous `waitUntilCompleted` stall with semaphore-based triple buffering, rotate `current_frame_index` once per frame instead of per draw call, fix `didModifyRange` byte length, and use `ResourceManager` for Metal resources.
+4. **Android Backend (`src/native/android.rs`)**: Fix `libc::malloc` leak and double copy in `load_asset`, replace background `SurfaceDestroyed` busy-wait spin loop with blocking wait, and cache JNI method IDs.
 

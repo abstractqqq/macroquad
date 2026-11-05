@@ -21,8 +21,6 @@ pub use event::*;
 
 pub use graphics::*;
 
-mod default_icon;
-
 pub use native::gl;
 
 #[derive(Clone)]
@@ -351,6 +349,8 @@ pub mod window {
         }
     }
 
+    pub use crate::native::ClipboardError;
+
     /// Get current OS clipboard value
     pub fn clipboard_get() -> Option<String> {
         let mut d = native_display().lock().unwrap();
@@ -358,7 +358,7 @@ pub mod window {
     }
 
     /// Save value to OS clipboard
-    pub fn clipboard_set(data: &str) {
+    pub fn clipboard_set(data: &str) -> Result<(), ClipboardError> {
         let mut d = native_display().lock().unwrap();
         d.clipboard.set(data)
     }

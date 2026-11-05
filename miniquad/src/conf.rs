@@ -233,8 +233,8 @@ pub struct Conf {
     /// Optional icon data used by the OS where applicable:
     /// - On Windows, taskbar/title bar icon
     /// - On macOS, Dock/title bar icon
+    /// - On Linux, taskbar/title bar icon on X11 and Wayland (via `xdg-toplevel-icon-v1`)
     /// - TODO: Favicon on HTML5
-    /// - TODO: Taskbar/title bar icon on Linux (depends on WM)
     /// - Note: on gnome, icon is determined using `WM_CLASS` (can be set under [`Platform`]) and
     ///   an external `.desktop` file
     pub icon: Option<Icon>,
@@ -243,26 +243,11 @@ pub struct Conf {
     pub platform: Platform,
 }
 
-/// Icon image in three levels of detail.
-#[derive(Clone)]
-pub struct Icon {
-    /// 16 * 16 image of RGBA pixels (each 4 * u8) in row-major order.
-    pub small: [u8; 16 * 16 * 4],
-    /// 32 x 32 image of RGBA pixels (each 4 * u8) in row-major order.
-    pub medium: [u8; 32 * 32 * 4],
-    /// 64 x 64 image of RGBA pixels (each 4 * u8) in row-major order.
-    pub big: [u8; 64 * 64 * 4],
-}
+/// 64 x 64 image of RGBA pixels (each 4 * u8) in row-major order.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Icon(pub &'static [u8; 64 * 64 * 4]);
 
-impl Icon {
-    pub fn miniquad_logo() -> Icon {
-        Icon {
-            small: crate::default_icon::SMALL,
-            medium: crate::default_icon::MEDIUM,
-            big: crate::default_icon::BIG,
-        }
-    }
-}
 // Printing 64x64 array with a default formatter is not meaningfull,
 // so debug will skip the data fields of an Icon
 impl std::fmt::Debug for Icon {
@@ -283,7 +268,7 @@ impl Default for Conf {
             fullscreen: false,
             sample_count: 1,
             window_resizable: true,
-            icon: Some(Icon::miniquad_logo()),
+            icon: None,
             platform: Default::default(),
         }
     }
@@ -300,7 +285,7 @@ impl Default for Conf {
             fullscreen: true, //
             sample_count: 1,
             window_resizable: false, //
-            icon: Some(Icon::miniquad_logo()),
+            icon: None,
             platform: Default::default(),
         }
     }

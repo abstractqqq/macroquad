@@ -380,9 +380,8 @@ impl AndroidClipboard {
     pub fn new() -> AndroidClipboard {
         AndroidClipboard {}
     }
-}
-impl crate::native::Clipboard for AndroidClipboard {
-    fn get(&mut self) -> Option<String> {
+
+    pub fn get(&mut self) -> Option<String> {
         unsafe {
             let env = attach_jni_env();
 
@@ -401,13 +400,17 @@ impl crate::native::Clipboard for AndroidClipboard {
         }
     }
 
-    fn set(&mut self, data: &str) {
-        let data = std::ffi::CString::new(data).unwrap();
+    pub fn set(&mut self, data: &str) -> Result<(), crate::native::ClipboardError> {
+        let data = std::ffi::CString::new(data)
+            .map_err(|_| crate::native::ClipboardError::InvalidData)?;
         unsafe {
             let env = attach_jni_env();
 
             let new_string_utf = (**env).NewStringUTF.unwrap();
             let jtext = new_string_utf(env, data.as_ptr());
+            if jtext.is_null() {
+                return Err(crate::native::ClipboardError::OperationFailed);
+            }
 
             ndk_utils::call_void_method!(
                 env,
@@ -416,6 +419,7 @@ impl crate::native::Clipboard for AndroidClipboard {
                 "(Ljava/lang/String;)V",
                 jtext
             );
+            Ok(())
         }
     }
 }
@@ -504,7 +508,7 @@ where
             panic!();
         }
 
-        let clipboard = Box::new(AndroidClipboard::new());
+        let clipboard = AndroidClipboard::new();
         let tx_fn = Box::new(move |req| tx.send(Message::Request(req)).unwrap());
         let density = query_display_density();
         crate::set_or_replace_display(NativeDisplayData {

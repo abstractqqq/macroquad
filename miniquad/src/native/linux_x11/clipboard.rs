@@ -7,17 +7,20 @@
 //! so use this with caution.
 
 use super::libx11::*;
+use crate::native::ClipboardError;
+use std::time::{Duration, Instant};
+
+const CLIPBOARD_TIMEOUT: Duration = Duration::from_millis(250);
+const POLL_SLEEP: Duration = Duration::from_micros(200);
 
 unsafe fn get_clipboard(
     libx11: &mut LibX11,
     display: *mut Display,
     window: Window,
     format: Atom,
+    owned_message: Option<&str>,
 ) -> Option<Vec<u8>> {
-    // We ask X server to ask current clipboard owner to convert selection to the desired format
-    // Selection owner is other X11 application and if it will not satisfy our request for any reason -
-    // we will wait for appropriate event forever
-    // but OK lets believe that all other linux apps will gracefully send us nice utf-8 strings
+    // Ask X server to ask current clipboard owner to convert selection to the desired format.
     (libx11.XConvertSelection)(
         display,
         libx11.extensions.clipboard,
@@ -26,25 +29,28 @@ unsafe fn get_clipboard(
         window,
         CurrentTime as Time,
     );
+    (libx11.XFlush)(display);
 
-    // And now X server will respond with clipboard data
-    // But we want "get_clipboard" to be blocking function and get result asap
-    // So we just start to wait for the event right here
-    // In case that our app already is clipboard owner - we need to handle SelectionNotify for data response
-    // and SelectionRequest - to handle this request we just did couple of lines above
+    // Wait specifically for SelectionNotify/SelectionRequest on our window without
+    // consuming unrelated input or window events from the X11 queue, and bound
+    // the wait with a timeout so an unresponsive owner cannot hang the app.
+    let deadline = Instant::now() + CLIPBOARD_TIMEOUT;
     let mut event = XEvent { type_0: 0 };
     loop {
-        (libx11.XNextEvent)(display, &mut event);
-        if event.type_0 == SelectionNotify
-            && event.xselection.selection == libx11.extensions.clipboard
-        {
-            // The property should be XSEL_DATA, otherwise we return None
-            return (event.xselection.property == libx11.extensions.xsel_data)
-                .then(|| get_property_bytes(libx11, display, window, event.xselection.property));
+        if (libx11.XCheckTypedWindowEvent)(display, window, SelectionNotify, &mut event) != 0 {
+            if event.xselection.selection == libx11.extensions.clipboard {
+                return (event.xselection.property == libx11.extensions.xsel_data).then(|| {
+                    get_property_bytes(libx11, display, window, event.xselection.property)
+                });
+            }
         }
-        if event.type_0 == SelectionRequest {
-            respond_to_clipboard_request(libx11, display, &mut event as *mut _);
+        if (libx11.XCheckTypedWindowEvent)(display, window, SelectionRequest, &mut event) != 0 {
+            respond_to_clipboard_request(libx11, display, &event, owned_message);
         }
+        if Instant::now() >= deadline {
+            return None;
+        }
+        std::thread::sleep(POLL_SLEEP);
     }
 }
 
@@ -90,9 +96,15 @@ pub(crate) unsafe fn get_property_bytes(
         if actual_type == libx11.extensions.incr {
             // we are in INCR mode
             incr_mode = true;
+            if !buf.is_null() {
+                (libx11.XFree)(buf as *mut libc::c_void);
+                buf = std::ptr::null_mut();
+            }
         } else if size == 0 {
             // no more data to read
-            (libx11.XFree)(buf as *mut libc::c_void);
+            if !buf.is_null() {
+                (libx11.XFree)(buf as *mut libc::c_void);
+            }
             return bytes;
         } else {
             let n_bits = match actual_format {
@@ -105,64 +117,54 @@ pub(crate) unsafe fn get_property_bytes(
                 buf as *const _,
                 n_bits * size as usize,
             ));
+            (libx11.XFree)(buf as *mut libc::c_void);
+            buf = std::ptr::null_mut();
 
             // if not in INCR mode, then we've got all the data
             if !incr_mode {
-                (libx11.XFree)(buf as *mut libc::c_void);
                 return bytes;
             }
         }
 
         if incr_mode {
             (libx11.XDeleteProperty)(display, window, property);
-            // wait until we get a new batch
+            (libx11.XFlush)(display);
+            // wait until we get a new batch without discarding unrelated events
+            let deadline = Instant::now() + CLIPBOARD_TIMEOUT;
             let mut event = XEvent { type_0: 0 };
             loop {
-                (libx11.XNextEvent)(display, &mut event);
-                if event.type_0 == PropertyNotify && event.xproperty.state == PropertyNewValue {
-                    break;
+                if (libx11.XCheckTypedWindowEvent)(display, window, PropertyNotify, &mut event) != 0
+                {
+                    if event.xproperty.atom == property && event.xproperty.state == PropertyNewValue
+                    {
+                        break;
+                    }
                 }
+                if Instant::now() >= deadline {
+                    return bytes;
+                }
+                std::thread::sleep(POLL_SLEEP);
             }
         }
     }
 }
 
-// Next message for clipboard request
-static mut MESSAGE: Option<String> = None;
-
-/// Claim that our app is X11 clipboard owner
-/// Now when some other linux app will ask X11 for clipboard content - it will be redirected to our app
-unsafe fn claim_clipboard_ownership(
-    libx11: &mut LibX11,
-    display: *mut Display,
-    window: Window,
-    message: String,
-) {
-    (libx11.XSetSelectionOwner)(
-        display,
-        libx11.extensions.clipboard,
-        window,
-        CurrentTime as Time,
-    );
-
-    MESSAGE = Some(message);
-}
-
-/// this function is supposed to be called from sapp's event loop
-/// when XSelectionEvent received.
-/// It will parse event and call XSendEvent with event response
+/// Respond to an X11 SelectionRequest event when our window owns the clipboard.
 pub(crate) unsafe fn respond_to_clipboard_request(
     libx11: &mut LibX11,
     display: *mut Display,
     event: *const XEvent,
+    owned_message: Option<&str>,
 ) {
-    assert!((*event).type_0 == SelectionRequest); // is it really SelectionRequest
+    assert!((*event).type_0 == SelectionRequest);
 
-    let empty_message = String::new();
-    let message = MESSAGE.as_ref().unwrap_or(&empty_message);
-
-    let utf8_string = libx11.extensions.utf8_string;
+    let message = owned_message.unwrap_or("");
     let xselectionrequest = (*event).xselectionrequest;
+    let property = if xselectionrequest.property != 0 {
+        xselectionrequest.property
+    } else {
+        xselectionrequest.target
+    };
     let mut ev = XSelectionEvent {
         type_0: SelectionNotify,
         serial: 0,
@@ -171,48 +173,68 @@ pub(crate) unsafe fn respond_to_clipboard_request(
         requestor: xselectionrequest.requestor,
         selection: xselectionrequest.selection,
         target: xselectionrequest.target,
-        property: xselectionrequest.property,
+        property,
         time: xselectionrequest.time,
     };
 
-    // only UTF8 requests are supported
-    if xselectionrequest.target == utf8_string {
+    let exts = &libx11.extensions;
+    let target = xselectionrequest.target;
+
+    if target == exts.targets {
+        let supported_targets: [Atom; 6] = [
+            exts.targets,
+            exts.utf8_string,
+            exts.mime_text_plain_utf8,
+            exts.mime_text_plain,
+            exts.text,
+            XA_STRING,
+        ];
         (libx11.XChangeProperty)(
             xselectionrequest.display,
             xselectionrequest.requestor,
-            xselectionrequest.property,
-            utf8_string,
+            property,
+            XA_ATOM,
+            32 as libc::c_int,
+            PropModeReplace,
+            supported_targets.as_ptr() as *const libc::c_uchar,
+            supported_targets.len() as _,
+        );
+    } else if target == exts.utf8_string
+        || target == exts.mime_text_plain_utf8
+        || target == exts.mime_text_plain
+        || target == exts.text
+        || target == XA_STRING
+    {
+        (libx11.XChangeProperty)(
+            xselectionrequest.display,
+            xselectionrequest.requestor,
+            property,
+            target,
             8 as libc::c_int,
             PropModeReplace,
             message.as_bytes().as_ptr(),
             message.len() as _,
         );
-
-        (libx11.XSendEvent)(
-            display,
-            ev.requestor,
-            false as _,
-            NoEventMask,
-            &mut ev as *mut XSelectionEvent as *mut XEvent,
-        );
     } else {
         // signal X that request is denied
         ev.property = 0 as Atom;
-
-        (libx11.XSendEvent)(
-            display,
-            ev.requestor,
-            false as _,
-            NoEventMask,
-            &mut ev as *mut XSelectionEvent as *mut XEvent,
-        );
     }
+
+    (libx11.XSendEvent)(
+        display,
+        ev.requestor,
+        false as _,
+        NoEventMask,
+        &mut ev as *mut XSelectionEvent as *mut XEvent,
+    );
+    (libx11.XFlush)(display);
 }
 
 pub struct X11Clipboard {
     libx11: LibX11,
     display: *mut Display,
     window: Window,
+    message: Option<String>,
 }
 unsafe impl Send for X11Clipboard {}
 unsafe impl Sync for X11Clipboard {}
@@ -223,20 +245,71 @@ impl X11Clipboard {
             libx11,
             display,
             window,
+            message: None,
         }
     }
-}
-impl crate::native::Clipboard for X11Clipboard {
-    fn get(&mut self) -> Option<String> {
-        let utf8_string = self.libx11.extensions.utf8_string;
-        let bytes =
-            unsafe { get_clipboard(&mut self.libx11, self.display, self.window, utf8_string)? };
-        Some(std::str::from_utf8(&bytes).ok()?.to_string())
+
+    pub(crate) fn clear_ownership(&mut self) {
+        self.message = None;
     }
 
-    fn set(&mut self, data: &str) {
+    pub(crate) unsafe fn respond_to_request(&mut self, event: *const XEvent) {
+        let msg = self.message.as_deref();
+        respond_to_clipboard_request(&mut self.libx11, self.display, event, msg);
+    }
+
+    pub fn get(&mut self) -> Option<String> {
         unsafe {
-            claim_clipboard_ownership(&mut self.libx11, self.display, self.window, data.to_owned());
-        };
+            let owner =
+                (self.libx11.XGetSelectionOwner)(self.display, self.libx11.extensions.clipboard);
+            if owner == 0 {
+                return None;
+            }
+            if owner == self.window {
+                return self.message.clone();
+            }
+
+            let utf8_string = self.libx11.extensions.utf8_string;
+            let msg_ref = self.message.as_deref();
+            let bytes = get_clipboard(
+                &mut self.libx11,
+                self.display,
+                self.window,
+                utf8_string,
+                msg_ref,
+            )
+            .or_else(|| {
+                get_clipboard(
+                    &mut self.libx11,
+                    self.display,
+                    self.window,
+                    XA_STRING,
+                    msg_ref,
+                )
+            })?;
+            String::from_utf8(bytes).ok()
+        }
+    }
+
+    pub fn set(&mut self, data: &str) -> Result<(), ClipboardError> {
+        unsafe {
+            if self.display.is_null() || self.window == 0 {
+                return Err(ClipboardError::Unavailable);
+            }
+            (self.libx11.XSetSelectionOwner)(
+                self.display,
+                self.libx11.extensions.clipboard,
+                self.window,
+                CurrentTime as Time,
+            );
+            (self.libx11.XFlush)(self.display);
+            if (self.libx11.XGetSelectionOwner)(self.display, self.libx11.extensions.clipboard)
+                != self.window
+            {
+                return Err(ClipboardError::OperationFailed);
+            }
+            self.message = Some(data.to_owned());
+            Ok(())
+        }
     }
 }

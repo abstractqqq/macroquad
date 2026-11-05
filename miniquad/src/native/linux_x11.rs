@@ -1,6 +1,6 @@
 // Spiritual successor of an X11 part of https://github.com/floooh/sokol/blob/master/sokol_app.h
 
-mod clipboard;
+pub mod clipboard;
 mod drag_n_drop;
 mod glx;
 mod keycodes;
@@ -250,13 +250,22 @@ impl X11Display {
             },
             // SelectionRequest
             30 => {
-                // // some other app is waiting for clibpoard content
-                // // need to make appropriate XSelectionEvent - response for this request
-                // // only UTF8_STRING request is actually supported
-                clipboard::respond_to_clipboard_request(&mut self.libx11, self.display, event);
+                if let Ok(mut d) = crate::native_display().try_lock() {
+                    if let crate::native::PlatformClipboard::X11(ref mut c) = d.clipboard {
+                        c.respond_to_request(event);
+                    }
+                }
             }
             // SelectionClear
-            29 => {}
+            29 => {
+                if event.xselectionclear.selection == self.libx11.extensions.clipboard {
+                    if let Ok(mut d) = crate::native_display().try_lock() {
+                        if let crate::native::PlatformClipboard::X11(ref mut c) = d.clipboard {
+                            c.clear_ownership();
+                        }
+                    }
+                }
+            }
             // MappingNotify
             34 => {
                 self.keycode_cache = [None; 256];
@@ -505,7 +514,7 @@ where
         .query_window_size(display.display, display.window);
 
     let (tx, rx) = std::sync::mpsc::channel();
-    let clipboard = Box::new(clipboard::X11Clipboard::new(
+    let clipboard = crate::native::PlatformClipboard::X11(clipboard::X11Clipboard::new(
         display.libx11.clone(),
         display.display,
         display.window,
@@ -616,7 +625,7 @@ where
         .query_window_size(display.display, display.window);
 
     let (tx, rx) = std::sync::mpsc::channel();
-    let clipboard = Box::new(clipboard::X11Clipboard::new(
+    let clipboard = crate::native::PlatformClipboard::X11(clipboard::X11Clipboard::new(
         display.libx11.clone(),
         display.display,
         display.window,
