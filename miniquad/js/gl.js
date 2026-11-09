@@ -641,6 +641,17 @@ var importObject = {
         },
         sapp_set_clipboard: function (ptr, len) {
             clipboard = UTF8ToString(ptr, len);
+            // Push to the system clipboard now; otherwise the text only reaches it on a later
+            // Ctrl+C. Browsers allow this shortly after a click or key press, which is when
+            // games call clipboard_set. `execCommand("copy")` fires the "copy" listener below,
+            // covering insecure (non-HTTPS, non-localhost) pages without `navigator.clipboard`.
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(clipboard).catch(function () {
+                    document.execCommand("copy");
+                });
+            } else {
+                document.execCommand("copy");
+            }
         },
         dpi_scale,
         rand: function () {
@@ -1310,14 +1321,14 @@ var importObject = {
             };
             window.addEventListener("copy", function (e) {
                 if (clipboard != null) {
-                    event.clipboardData.setData('text/plain', clipboard);
-                    event.preventDefault();
+                    e.clipboardData.setData('text/plain', clipboard);
+                    e.preventDefault();
                 }
             });
             window.addEventListener("cut", function (e) {
                 if (clipboard != null) {
-                    event.clipboardData.setData('text/plain', clipboard);
-                    event.preventDefault();
+                    e.clipboardData.setData('text/plain', clipboard);
+                    e.preventDefault();
                 }
             });
 
