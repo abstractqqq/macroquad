@@ -1,6 +1,8 @@
 use super::PlaySoundParams;
 use core::num::NonZeroU32;
 
+// Implemented by `audio.js` (registered into `importObject.env`).
+#[link(wasm_import_module = "env")]
 extern "C" {
     fn audio_init();
     fn audio_add_buffer(content: *const u8, content_len: u32) -> u32;
