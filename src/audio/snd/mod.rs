@@ -39,7 +39,19 @@ mod wav;
 #[cfg(not(target_arch = "wasm32"))]
 mod vorbis;
 
+#[cfg(not(target_arch = "wasm32"))]
+mod stream;
+
 pub use backend::{AudioContext, Playback, Sound};
+
+/// Where a streamed sound reads its encoded data from.
+#[derive(Clone)]
+pub enum StreamSource {
+    /// Read from disk while playing; only a small buffer is resident.
+    File(std::path::PathBuf),
+    /// Encoded bytes already in memory; PCM is still decoded incrementally.
+    Bytes(std::sync::Arc<[u8]>),
+}
 
 pub struct PlaySoundParams {
     pub looped: bool,

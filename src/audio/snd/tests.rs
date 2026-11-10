@@ -395,3 +395,184 @@ mod mixer_playback {
     }
 }
 
+
+mod streaming {
+    use super::super::mixer::Mixer;
+    use super::super::{PlaySoundParams, StreamSource};
+    use super::{fixture, load_samples_from_file, rms_diff, FIXTURES};
+    use std::sync::Arc;
+    use std::time::{Duration, Instant};
+
+    fn source(name: &str) -> StreamSource {
+        StreamSource::Bytes(Arc::from(fixture(name)))
+    }
+
+    /// Pulls stereo samples through the mixer at roughly twice real time (like an audio
+    /// callback would), until `want` samples were collected or the timeout hit.
+    fn render(mixer: &mut Mixer, want: usize) -> Vec<f32> {
+        let mut out = Vec::new();
+        let mut buf = vec![0.0f32; 1024];
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while out.len() < want && Instant::now() < deadline {
+            let frames = buf.len() / 2;
+            mixer.fill_audio_buffer(&mut buf, frames);
+            out.extend_from_slice(&buf);
+            std::thread::sleep(Duration::from_millis(3));
+        }
+        out
+    }
+
+    /// Lets the worker thread fill its queue so playback starts without an underrun.
+    fn prebuffer() {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+
+    #[test]
+    fn streamed_matches_buffered_for_all_fixtures() {
+        for name in FIXTURES {
+            let (builder, ctrl) = Mixer::new();
+            let mut mixer = builder.build();
+            let reference = load_samples_from_file(&fixture(name)).unwrap();
+
+            let (id, duration) = ctrl.load_stream(source(name)).unwrap();
+            let expected = (reference.len() / 2) as f32 / 44100.0;
+            assert!((duration - expected).abs() < 1e-2, "{name}: {duration} vs {expected}");
+            ctrl.play(id, PlaySoundParams::default());
+            prebuffer();
+
+            let got = render(&mut mixer, reference.len());
+            let got = &got[..];
+            let n = reference.len().min(got.len());
+            assert!(n + 16 >= reference.len(), "{name}: only {n} of {} samples", reference.len());
+            let rms = rms_diff(&got[..n], &reference[..n]);
+            assert!(rms < 0.02, "{name}: rms diff {rms}");
+        }
+    }
+
+    #[test]
+    fn streamed_wav_44k_is_bit_exact() {
+        let (builder, ctrl) = Mixer::new();
+        let mut mixer = builder.build();
+        let reference = load_samples_from_file(&fixture("stereo_44k.wav")).unwrap();
+        let (id, _) = ctrl.load_stream(source("stereo_44k.wav")).unwrap();
+        ctrl.play(id, PlaySoundParams::default());
+        prebuffer();
+        let got = render(&mut mixer, reference.len());
+        assert_eq!(&got[..reference.len()], &reference[..]);
+    }
+
+    #[test]
+    fn looping_stream_keeps_producing_audio() {
+        let (builder, ctrl) = Mixer::new();
+        let mut mixer = builder.build();
+        let (id, _) = ctrl.load_stream(source("stereo_48k.ogg")).unwrap();
+        ctrl.play(id, PlaySoundParams { looped: true, volume: 1.0 });
+        prebuffer();
+        let want = super::EXPECTED_LEN * 3;
+        let got = render(&mut mixer, want);
+        assert!(got.len() >= want, "got only {} samples", got.len());
+        // The second and third passes must carry audio again, i.e. the loop restarted.
+        let second = &got[super::EXPECTED_LEN..super::EXPECTED_LEN * 2];
+        let third = &got[super::EXPECTED_LEN * 2..];
+        assert!(second.iter().any(|s| s.abs() > 0.01), "second pass silent");
+        assert!(third.iter().any(|s| s.abs() > 0.01), "third pass silent");
+    }
+
+    #[test]
+    fn seek_and_stop() {
+        let (builder, ctrl) = Mixer::new();
+        let mut mixer = builder.build();
+        let (id, _) = ctrl.load_stream(source("stereo_44k.ogg")).unwrap();
+        let pb = ctrl.play(id, PlaySoundParams { looped: true, volume: 1.0 });
+        prebuffer();
+        let _ = render(&mut mixer, 4096);
+
+        ctrl.seek(pb.play_id, 44100);
+        prebuffer();
+        let got = render(&mut mixer, 20000);
+        assert!(ctrl.play_error(pb.play_id).is_none());
+        assert!(got.iter().any(|s| s.abs() > 0.01));
+
+        ctrl.stop(pb.play_id);
+        let mut buf = vec![0.0f32; 1024];
+        mixer.fill_audio_buffer(&mut buf, 512);
+        assert!(buf.iter().all(|s| *s == 0.0), "stopped stream must be silent");
+    }
+
+    #[test]
+    fn pause_and_delete() {
+        let (builder, ctrl) = Mixer::new();
+        let mut mixer = builder.build();
+        let (id, _) = ctrl.load_stream(source("stereo_44k.wav")).unwrap();
+        let pb = ctrl.play(id, PlaySoundParams { looped: true, volume: 1.0 });
+        prebuffer();
+        let _ = render(&mut mixer, 4096);
+        ctrl.pause(pb.play_id);
+        let mut buf = vec![0.0f32; 1024];
+        mixer.fill_audio_buffer(&mut buf, 512);
+        assert!(buf.iter().all(|s| *s == 0.0));
+        ctrl.resume(pb.play_id);
+        assert!(render(&mut mixer, 4096).iter().any(|s| s.abs() > 0.01));
+        ctrl.delete(id);
+        mixer.fill_audio_buffer(&mut buf, 512);
+        assert!(buf.iter().all(|s| *s == 0.0));
+    }
+
+    #[test]
+    fn rejects_bad_streams() {
+        let (_b, ctrl) = Mixer::new();
+        let junk: Arc<[u8]> = Arc::from(&b"nope nope nope nope"[..]);
+        assert!(ctrl.load_stream(StreamSource::Bytes(junk)).is_err());
+        assert!(ctrl
+            .load_stream(StreamSource::File("/nonexistent/x.ogg".into()))
+            .is_err());
+    }
+
+    #[test]
+    fn file_source_streams_from_disk() {
+        for name in ["stereo_44k.wav", "stereo_44k.ogg"] {
+            let path = format!("{}/src/audio/snd/testdata/{}", env!("CARGO_MANIFEST_DIR"), name);
+            let (builder, ctrl) = Mixer::new();
+            let mut mixer = builder.build();
+            let (id, d) = ctrl.load_stream(StreamSource::File(path.into())).unwrap();
+            assert!(d > 1.0, "{name}");
+            ctrl.play(id, PlaySoundParams::default());
+            prebuffer();
+            let got = render(&mut mixer, 20000);
+            assert!(got.iter().any(|s| s.abs() > 0.01), "{name}");
+        }
+    }
+
+    #[test]
+    fn surfaces_runtime_stream_errors() {
+        let tmp_dir = std::env::temp_dir();
+        let path = tmp_dir.join(format!("rayquad_stream_err_{}.wav", std::process::id()));
+        std::fs::write(&path, fixture("stereo_44k.wav")).unwrap();
+
+        let (builder, ctrl) = Mixer::new();
+        let mut mixer = builder.build();
+        let (id, _) = ctrl.load_stream(StreamSource::File(path.clone())).unwrap();
+
+        // Remove the file after load_stream succeeded; playing should record an open error.
+        std::fs::remove_file(&path).unwrap();
+        let pb = ctrl.play(id, PlaySoundParams::default());
+
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let mut buf = vec![0.0f32; 1024];
+        while Instant::now() < deadline {
+            mixer.fill_audio_buffer(&mut buf, 512);
+            if ctrl.play_error(pb.play_id).is_some() {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+
+        let err = ctrl.play_error(pb.play_id).expect("expected playback stream error");
+        assert!(err.contains("failed to open audio stream"), "got: {err}");
+        assert_eq!(ctrl.sound_error(id).as_deref(), Some(err.as_str()));
+
+        ctrl.delete(id);
+        assert!(ctrl.play_error(pb.play_id).is_none());
+        assert!(ctrl.sound_error(id).is_none());
+    }
+}

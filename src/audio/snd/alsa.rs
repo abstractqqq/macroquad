@@ -203,6 +203,12 @@ impl Sound {
         Ok(Sound { sound_id, duration })
     }
 
+    pub fn load_stream(ctx: &AudioContext, source: super::StreamSource) -> Result<Sound, super::Error> {
+        let (sound_id, duration) = ctx.mixer_ctrl.load_stream(source)?;
+
+        Ok(Sound { sound_id, duration })
+    }
+
     pub fn duration(&self) -> f32 {
         self.duration
     }
@@ -234,5 +240,9 @@ impl Sound {
 
     pub fn delete(&self, ctx: &AudioContext) {
         ctx.mixer_ctrl.delete(self.sound_id);
+    }
+
+    pub fn error(&self, ctx: &AudioContext) -> Option<String> {
+        ctx.mixer_ctrl.sound_error(self.sound_id)
     }
 }

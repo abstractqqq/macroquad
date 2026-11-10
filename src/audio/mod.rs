@@ -9,7 +9,7 @@ use std::sync::Arc;
 mod snd;
 
 #[cfg(feature = "audio")]
-use snd::{AudioContext as QuadSndContext, Sound as QuadSndSound};
+use snd::{AudioContext as QuadSndContext, Sound as QuadSndSound, StreamSource as QuadStreamSource};
 
 #[cfg(feature = "audio")]
 pub use snd::{PlaySoundParams, Playback};
@@ -19,6 +19,12 @@ mod dummy_audio {
     use crate::audio::{PlaySoundParams, Playback};
 
     pub struct AudioContext {}
+
+    /// Mirrors `snd::StreamSource`.
+    pub enum StreamSource {
+        File(std::path::PathBuf),
+        Bytes(std::sync::Arc<[u8]>),
+    }
 
     impl AudioContext {
         pub fn new() -> AudioContext {
@@ -36,6 +42,10 @@ mod dummy_audio {
 
     impl Sound {
         pub fn load(_ctx: &mut AudioContext, _data: &[u8]) -> Result<Sound, String> {
+            Ok(Sound {})
+        }
+
+        pub fn load_stream(_ctx: &mut AudioContext, _source: StreamSource) -> Result<Sound, String> {
             Ok(Sound {})
         }
 
@@ -64,11 +74,17 @@ mod dummy_audio {
         }
 
         pub fn delete(&self, _ctx: &AudioContext) {}
+
+        pub fn error(&self, _ctx: &AudioContext) -> Option<String> {
+            None
+        }
     }
 }
 
 #[cfg(not(feature = "audio"))]
-use dummy_audio::{AudioContext as QuadSndContext, Sound as QuadSndSound};
+use dummy_audio::{
+    AudioContext as QuadSndContext, Sound as QuadSndSound, StreamSource as QuadStreamSource,
+};
 
 #[cfg(not(feature = "audio"))]
 #[derive(Clone, Copy, Debug)]
@@ -81,6 +97,9 @@ impl Playback {
     pub fn resume(&self, _ctx: &QuadSndContext) {}
     pub fn seek(&self, _ctx: &QuadSndContext, _position: f32) {}
     pub fn set_volume(&self, _ctx: &QuadSndContext, _volume: f32) {}
+    pub fn error(&self, _ctx: &QuadSndContext) -> Option<String> {
+        None
+    }
 }
 
 #[cfg(not(feature = "audio"))]
@@ -158,6 +177,12 @@ impl Sound {
         let ctx = &get_context().audio_context;
         self.0 .0.set_volume(&ctx.native_ctx, volume);
     }
+
+    /// Returns the last runtime error encountered while streaming this sound, if any.
+    pub fn error(&self) -> Option<String> {
+        let ctx = &get_context().audio_context;
+        self.0 .0.error(&ctx.native_ctx)
+    }
 }
 
 impl std::fmt::Debug for Sound {
@@ -184,6 +209,63 @@ pub async fn load_sound_from_bytes(data: &[u8]) -> Result<Sound, Error> {
     let sound = {
         let ctx = &mut get_context().audio_context;
         QuadSndSound::load(&mut ctx.native_ctx, data)
+            .map_err(|e| Error::AudioError(e.to_string()))?
+    };
+
+    Ok(Sound(Arc::new(QuadSndSoundGuarded(sound))))
+}
+
+/// Load an audio file for streaming playback.
+///
+/// Unlike [`load_sound`], the file is **not** decoded up front. Only a small amount of
+/// audio (a few hundred milliseconds) is decoded ahead of the playback position, so
+/// this is the right choice for long background music. The returned [`Sound`] works with
+/// all the usual functions (`play_sound`, `seek_sound`, `pause_sound`, ...).
+///
+/// Supports WAV and OGG Vorbis. On desktop the file is read from disk while playing
+/// (relative to the folder set with `set_pc_assets_folder`). On Android/iOS the file is
+/// first loaded into memory as encoded bytes (still decoded incrementally), and on web
+/// it behaves like [`load_sound`] since the browser decodes whole buffers.
+///
+/// Every simultaneous playback of a streamed sound uses its own decoder thread and file
+/// handle, so prefer playing a streamed sound once at a time (e.g. one BGM track).
+pub async fn load_sound_stream(path: &str) -> Result<Sound, Error> {
+    #[cfg(not(any(
+        target_arch = "wasm32",
+        target_os = "android",
+        target_os = "ios",
+        target_os = "tvos"
+    )))]
+    {
+        let path = match get_context().pc_assets_folder {
+            Some(ref folder) => format!("{folder}/{path}"),
+            None => path.to_string(),
+        };
+        load_sound_stream_source(QuadStreamSource::File(path.into()))
+    }
+
+    #[cfg(any(
+        target_arch = "wasm32",
+        target_os = "android",
+        target_os = "ios",
+        target_os = "tvos"
+    ))]
+    {
+        let data = load_file(path).await?;
+        load_sound_stream_from_bytes(data)
+    }
+}
+
+/// Load encoded WAV/OGG bytes that are already in memory (e.g. `include_bytes!`) for
+/// streaming playback. The bytes stay resident but PCM is decoded incrementally.
+pub fn load_sound_stream_from_bytes(data: impl Into<Arc<[u8]>>) -> Result<Sound, Error> {
+    load_sound_stream_source(QuadStreamSource::Bytes(data.into()))
+}
+
+fn load_sound_stream_source(source: QuadStreamSource) -> Result<Sound, Error> {
+    let sound = {
+        let ctx = &mut get_context().audio_context;
+        QuadSndSound::load_stream(&mut ctx.native_ctx, source)
             .map_err(|e| Error::AudioError(e.to_string()))?
     };
 
@@ -259,4 +341,15 @@ pub fn seek_playback(playback: &Playback, position: f32) {
 pub fn set_playback_volume(playback: &Playback, volume: f32) {
     let ctx = &get_context().audio_context;
     playback.set_volume(&ctx.native_ctx, volume);
+}
+
+/// Returns the last runtime error encountered while streaming `sound`, if any.
+pub fn sound_error(sound: &Sound) -> Option<String> {
+    sound.error()
+}
+
+/// Returns any runtime error encountered by this streaming `playback`, if any.
+pub fn playback_error(playback: &Playback) -> Option<String> {
+    let ctx = &get_context().audio_context;
+    playback.error(&ctx.native_ctx)
 }

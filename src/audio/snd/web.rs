@@ -63,6 +63,10 @@ impl Playback {
     pub fn set_volume(&self, _ctx: &AudioContext, volume: f32) {
         unsafe { audio_playback_set_volume(self.0.get(), volume) }
     }
+
+    pub fn error(&self, _ctx: &AudioContext) -> Option<String> {
+        None
+    }
 }
 
 impl Sound {
@@ -71,6 +75,18 @@ impl Sound {
         let buffer = NonZeroU32::new(buffer)
             .ok_or_else(|| super::Error::Decode("invalid sound buffer ID from JS".into()))?;
         Ok(Sound(buffer))
+    }
+
+    /// The browser decodes whole buffers, so on web this is not a true stream: in-memory
+    /// bytes are loaded like a regular sound. File paths are not supported here (the
+    /// caller loads the file into bytes first).
+    pub fn load_stream(ctx: &AudioContext, source: super::StreamSource) -> Result<Sound, super::Error> {
+        match source {
+            super::StreamSource::Bytes(bytes) => Self::load(ctx, &bytes),
+            super::StreamSource::File(_) => Err(super::Error::Decode(
+                "streaming from a file path is not supported on web".into(),
+            )),
+        }
     }
 
     /// WASM requirement - sound may be used only after it is is_loaded
@@ -118,5 +134,9 @@ impl Sound {
 
     pub fn delete(&self, _ctx: &AudioContext) {
         unsafe { audio_source_delete(self.0.get()) }
+    }
+
+    pub fn error(&self, _ctx: &AudioContext) -> Option<String> {
+        None
     }
 }

@@ -1343,7 +1343,15 @@ static uint8 get8(vorb *z)
 
    #ifndef STB_VORBIS_NO_STDIO
    {
+   // fgetc takes the FILE lock on every byte; the header/page parsing here reads byte by
+   // byte, so use the unlocked variants (each decoder handle is single-threaded anyway).
+   #if defined(_WIN32)
+   int c = _fgetc_nolock(z->f);
+   #elif defined(__unix__) || defined(__APPLE__)
+   int c = getc_unlocked(z->f);
+   #else
    int c = fgetc(z->f);
+   #endif
    if (c == EOF) { z->eof = TRUE; return 0; }
    return c;
    }

@@ -1,14 +1,17 @@
+use super::stream::{StreamDecoder, StreamErrors, StreamState};
 use super::vorbis::decode_ogg;
 use super::wav::decode_wav;
-use super::{AudioContext, Error, PlaySoundParams};
+use super::{AudioContext, Error, PlaySoundParams, StreamSource};
 
 use core::num::NonZeroU32;
+use foldhash::{HashMap, HashMapExt};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 enum AudioMessage {
     AddSound(NonZeroU32, Arc<[f32]>),
+    PlayStream(Box<StreamState>),
     Play(NonZeroU32, NonZeroU32, bool, f32),
     Stop(NonZeroU32),
     StopAll(NonZeroU32),
@@ -99,6 +102,7 @@ pub struct Mixer {
     rx: mpsc::Receiver<AudioMessage>,
     sounds: Vec<Option<Arc<[f32]>>>,
     mixer_state: Vec<SoundState>,
+    streams: Vec<StreamState>,
 }
 
 pub struct MixerBuilder {
@@ -109,6 +113,8 @@ pub struct MixerControl {
     tx: mpsc::Sender<AudioMessage>,
     sound_id: AtomicU32,
     play_id: AtomicU32,
+    stream_sources: Mutex<HashMap<NonZeroU32, StreamSource>>,
+    stream_errors: Arc<Mutex<StreamErrors>>,
 }
 
 fn next_id(counter: &AtomicU32) -> NonZeroU32 {
@@ -148,6 +154,10 @@ impl Playback {
         ctx.mixer_ctrl
             .send(AudioMessage::SetVolume(self.play_id, volume));
     }
+
+    pub fn error(&self, ctx: &AudioContext) -> Option<String> {
+        ctx.mixer_ctrl.play_error(self.play_id)
+    }
 }
 
 impl MixerControl {
@@ -165,8 +175,42 @@ impl MixerControl {
         Ok((sound_id, duration))
     }
 
+    /// Registers a sound that is decoded incrementally while playing instead of up front.
+    /// The source is opened once here to validate it and read the duration.
+    pub fn load_stream(&self, source: StreamSource) -> Result<(NonZeroU32, f32), super::Error> {
+        let duration = StreamDecoder::open(&source)?.duration();
+        let sound_id = next_id(&self.sound_id);
+        self.stream_sources
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(sound_id, source);
+        Ok((sound_id, duration))
+    }
+
     pub fn play(&self, sound_id: NonZeroU32, params: PlaySoundParams) -> Playback {
         let play_id = next_id(&self.play_id);
+
+        let stream_source = self
+            .stream_sources
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&sound_id)
+            .cloned();
+        if let Some(source) = stream_source {
+            self.stream_errors
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clear_sound_error(sound_id);
+            self.send(AudioMessage::PlayStream(Box::new(StreamState::new(
+                sound_id,
+                play_id,
+                source,
+                params.looped,
+                params.volume,
+                Arc::clone(&self.stream_errors),
+            ))));
+            return Playback { play_id };
+        }
 
         self.send(AudioMessage::Play(
             sound_id,
@@ -215,7 +259,29 @@ impl MixerControl {
     }
 
     pub fn delete(&self, sound_id: NonZeroU32) {
+        self.stream_sources
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&sound_id);
+        self.stream_errors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clear_sound(sound_id);
         self.send(AudioMessage::Delete(sound_id));
+    }
+
+    pub fn play_error(&self, play_id: NonZeroU32) -> Option<String> {
+        self.stream_errors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_play(play_id)
+    }
+
+    pub fn sound_error(&self, sound_id: NonZeroU32) -> Option<String> {
+        self.stream_errors
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get_sound(sound_id)
     }
 
     fn send(&self, message: AudioMessage) {
@@ -231,6 +297,7 @@ impl MixerBuilder {
             rx: self.rx,
             sounds: Vec::new(),
             mixer_state: vec![],
+            streams: vec![],
         }
     }
 }
@@ -245,6 +312,8 @@ impl Mixer {
                 tx,
                 sound_id: AtomicU32::new(1),
                 play_id: AtomicU32::new(1),
+                stream_sources: Mutex::new(HashMap::new()),
+                stream_errors: Arc::new(Mutex::new(StreamErrors::new())),
             },
         )
     }
@@ -252,6 +321,9 @@ impl Mixer {
     pub fn fill_audio_buffer(&mut self, buffer: &mut [f32], frames: usize) {
         while let Ok(message) = self.rx.try_recv() {
             match message {
+                AudioMessage::PlayStream(stream) => {
+                    self.streams.push(*stream);
+                }
                 AudioMessage::AddSound(id, data) => {
                     let idx = (id.get() - 1) as usize;
                     if idx >= self.sounds.len() {
@@ -275,6 +347,9 @@ impl Mixer {
                     if let Some(i) = self.mixer_state.iter().position(|s| s.play_id == play_id) {
                         self.mixer_state.swap_remove(i);
                     }
+                    if let Some(i) = self.streams.iter().position(|s| s.play_id == play_id) {
+                        self.streams.swap_remove(i);
+                    }
                 }
                 AudioMessage::StopAll(sound_id) => {
                     for i in (0..self.mixer_state.len()).rev() {
@@ -282,41 +357,63 @@ impl Mixer {
                             self.mixer_state.swap_remove(i);
                         }
                     }
+                    self.streams.retain(|s| s.sound_id != sound_id);
                 }
                 AudioMessage::Pause(play_id) => {
                     if let Some(sound) = self.mixer_state.iter_mut().find(|s| s.play_id == play_id) {
                         sound.pause();
+                    }
+                    if let Some(s) = self.streams.iter_mut().find(|s| s.play_id == play_id) {
+                        s.paused = true;
                     }
                 }
                 AudioMessage::PauseAll(sound_id) => {
                     for sound in self.mixer_state.iter_mut().filter(|s| s.sound_id == sound_id) {
                         sound.pause();
                     }
+                    for s in self.streams.iter_mut().filter(|s| s.sound_id == sound_id) {
+                        s.paused = true;
+                    }
                 }
                 AudioMessage::Resume(play_id) => {
                     if let Some(sound) = self.mixer_state.iter_mut().find(|s| s.play_id == play_id) {
                         sound.resume();
+                    }
+                    if let Some(s) = self.streams.iter_mut().find(|s| s.play_id == play_id) {
+                        s.paused = false;
                     }
                 }
                 AudioMessage::ResumeAll(sound_id) => {
                     for sound in self.mixer_state.iter_mut().filter(|s| s.sound_id == sound_id) {
                         sound.resume();
                     }
+                    for s in self.streams.iter_mut().filter(|s| s.sound_id == sound_id) {
+                        s.paused = false;
+                    }
                 }
                 AudioMessage::Seek(play_id, sample_offset) => {
                     if let Some(sound) = self.mixer_state.iter_mut().find(|s| s.play_id == play_id) {
                         sound.seek(sample_offset);
+                    }
+                    if let Some(s) = self.streams.iter_mut().find(|s| s.play_id == play_id) {
+                        s.seek(sample_offset);
                     }
                 }
                 AudioMessage::SeekAll(sound_id, sample_offset) => {
                     for sound in self.mixer_state.iter_mut().filter(|s| s.sound_id == sound_id) {
                         sound.seek(sample_offset);
                     }
+                    for s in self.streams.iter_mut().filter(|s| s.sound_id == sound_id) {
+                        s.seek(sample_offset);
+                    }
                 }
                 AudioMessage::SetVolume(play_id, volume) => {
                     if let Some(sound) = self.mixer_state.iter_mut().find(|s| s.play_id == play_id)
                     {
                         sound.volume = volume;
+                    }
+                    if let Some(s) = self.streams.iter_mut().find(|s| s.play_id == play_id) {
+                        s.volume = volume;
                     }
                 }
                 AudioMessage::SetVolumeAll(sound_id, volume) => {
@@ -327,6 +424,9 @@ impl Mixer {
                     {
                         sound.volume = volume;
                     }
+                    for s in self.streams.iter_mut().filter(|s| s.sound_id == sound_id) {
+                        s.volume = volume;
+                    }
                 }
                 AudioMessage::Delete(sound_id) => {
                     for i in (0..self.mixer_state.len()).rev() {
@@ -334,6 +434,7 @@ impl Mixer {
                             self.mixer_state.swap_remove(i);
                         }
                     }
+                    self.streams.retain(|s| s.sound_id != sound_id);
                     let idx = (sound_id.get() - 1) as usize;
                     if let Some(slot) = self.sounds.get_mut(idx) {
                         *slot = None;
@@ -409,6 +510,17 @@ impl Mixer {
                 self.mixer_state.swap_remove(i);
             } else {
                 i += 1;
+            }
+        }
+
+        // Streaming voices (decoded on worker threads, only queue reads happen here).
+        let mut i = 0;
+        while i < self.streams.len() {
+            let stream = &mut self.streams[i];
+            if stream.paused || stream.mix(buffer) {
+                i += 1;
+            } else {
+                self.streams.swap_remove(i);
             }
         }
     }
