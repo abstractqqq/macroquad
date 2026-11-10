@@ -3,7 +3,6 @@ fn main() {
     if target_arch != "wasm32" && std::env::var("CARGO_FEATURE_AUDIO").is_ok() {
         let res = cc::Build::new()
             .file("src/audio/snd/stb_vorbis.c")
-            .define("STB_VORBIS_NO_STDIO", None)
             .define("STB_VORBIS_NO_PUSHDATA_API", None)
             .define("STB_VORBIS_NO_INTEGER_CONVERSION", None)
             .define("STB_VORBIS_MAX_CHANNELS", "2")
