@@ -20,7 +20,7 @@
 //! use rayquad::prelude::*;
 //!
 //! fn main() {
-//!     Window::new("BasicShapes", game());
+//!     rayquad::Window::new("BasicShapes", game());
 //! }
 //!
 //! async fn game() {

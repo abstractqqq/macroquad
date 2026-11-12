@@ -641,9 +641,9 @@ impl Texture2D {
     /// Creates an empty Texture2D.
     ///
     /// # Example
-    /// ```
+    /// ```no_run
     /// # use rayquad::prelude::*;
-    /// # fn main() { Window::new("test", game()); }
+    /// # fn main() { rayquad::Window::new("test", game()); }
     /// # async fn game() {
     /// let texture = Texture2D::empty();
     /// # }
@@ -679,9 +679,9 @@ impl Texture2D {
     ///
     /// # Example
     ///
-    /// ```
+    /// ```no_run
     /// # use rayquad::prelude::*;
-    /// # fn main() { Window::new("test", game()); }
+    /// # fn main() { rayquad::Window::new("test", game()); }
     /// # async fn game() {
     /// // Create a 2x2 texture from a byte slice with 4 rgba pixels
     /// let bytes: Vec<u8> = vec![255, 0, 0, 192, 0, 255, 0, 192, 0, 0, 255, 192, 255, 255, 255, 192];
@@ -771,9 +771,9 @@ impl Texture2D {
     /// Use Nearest if you need integer-ratio scaling for pixel art, for example.
     ///
     /// # Example
-    /// ```
+    /// ```no_run
     /// # use rayquad::prelude::*;
-    /// # fn main() { Window::new("test", game()); }
+    /// # fn main() { rayquad::Window::new("test", game()); }
     /// # async fn game() {
     /// let texture = Texture2D::empty();
     /// texture.set_filter(FilterMode::Linear);
