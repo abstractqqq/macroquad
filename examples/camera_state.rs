@@ -76,6 +76,12 @@ async fn game() {
                 }
             }
 
+            // from_display_rect is y-down on screen too: the rect's top-left is the screen's top-left.
+            let screen = Camera2D::from_display_rect(Rect::new(0., 0., screen_width(), screen_height()));
+            if screen.world_to_screen(vec2(0., 0.)).length() > 0.5 {
+                failures.push("from_display_rect: screen camera is not y-down");
+            }
+
             // render_to_image: a rect at the top-left of camera space must be at the top of the image.
             let rti_rt = render_target(100, 50);
             let img = render_to_image(

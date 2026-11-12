@@ -47,13 +47,17 @@ pub struct Camera2D {
 }
 
 impl Camera2D {
-    /// Will make camera space equals given rect.
+    /// Will make camera space equals given rect, y-down: the rect's top-left corner is at the
+    /// top-left of the screen, or of the render target.
+    ///
+    /// The same rect works for both: a render target drawn with this camera is stored upright,
+    /// so its texture can be drawn without `flip_y`.
     pub fn from_display_rect(rect: Rect) -> Camera2D {
         let target = vec2(rect.x + rect.w / 2., rect.y + rect.h / 2.);
 
         Camera2D {
             target,
-            zoom: vec2(1. / rect.w * 2., -1. / rect.h * 2.),
+            zoom: vec2(1. / rect.w * 2., 1. / rect.h * 2.),
             offset: vec2(0., 0.),
             rotation: 0.,
 
@@ -340,8 +344,8 @@ pub fn set_default_camera() {
 /// can be called anywhere, including inside another camera. `camera.render_target` is
 /// replaced by `target`.
 ///
-/// The returned image is top-down, as the target would look on screen (row 0 is the top).
-/// Note that reading a render texture directly gives bottom-up rows instead.
+/// The returned image is the target's texture data. With a y-down camera such as
+/// [`Camera2D::from_display_rect`], row 0 is the top.
 ///
 /// This is a blocking GPU readback: fine for thumbnails or save-game previews, too slow to
 /// run every frame.
@@ -353,7 +357,7 @@ pub fn set_default_camera() {
 /// set_camera(&Camera2D { render_target: Some(target.clone()), ..camera });
 /// draw_scene();
 /// pop_camera_state(); // flushes the draw calls into the target
-/// let image = target.texture.get_texture_data(); // bottom-up rows, flip if needed
+/// let image = target.texture.get_texture_data();
 /// ```
 pub fn render_to_image(target: &RenderTarget, camera: Camera2D, draw: impl FnOnce()) -> Image {
     push_camera_state();
@@ -364,17 +368,7 @@ pub fn render_to_image(target: &RenderTarget, camera: Camera2D, draw: impl FnOnc
     draw();
     pop_camera_state();
 
-    let mut image = target.texture.get_texture_data();
-
-    // GL texture rows start at the bottom, flip so row 0 is the top.
-    let row = image.width as usize * 4;
-    let rows = image.height as usize;
-    for y in 0..rows / 2 {
-        let (top, bottom) = image.bytes.split_at_mut((rows - 1 - y) * row);
-        top[y * row..(y + 1) * row].swap_with_slice(&mut bottom[..row]);
-    }
-
-    image
+    target.texture.get_texture_data()
 }
 
 pub(crate) struct CameraState {
