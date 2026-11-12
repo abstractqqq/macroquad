@@ -4,7 +4,7 @@ use crate::{
     get_context,
     math::Rect,
     prelude::RenderPass,
-    texture::RenderTarget,
+    texture::{Image, RenderTarget},
     window::{screen_height, screen_width},
 };
 #[cfg(feature = "3d")]
@@ -332,6 +332,49 @@ pub fn set_default_camera() {
     context.gl.viewport(None);
     context.gl.depth_test(false);
     context.camera_matrix = None;
+}
+
+/// Runs `draw` with `camera` rendering into `target`, then reads the target back as an [`Image`].
+///
+/// Camera state (camera, viewport, render pass) is saved before and restored after, so this
+/// can be called anywhere, including inside another camera. `camera.render_target` is
+/// replaced by `target`.
+///
+/// The returned image is top-down, as the target would look on screen (row 0 is the top).
+/// Note that reading a render texture directly gives bottom-up rows instead.
+///
+/// This is a blocking GPU readback: fine for thumbnails or save-game previews, too slow to
+/// run every frame.
+///
+/// It is only a convenience. The same thing can be done procedurally:
+///
+/// ```ignore
+/// push_camera_state();
+/// set_camera(&Camera2D { render_target: Some(target.clone()), ..camera });
+/// draw_scene();
+/// pop_camera_state(); // flushes the draw calls into the target
+/// let image = target.texture.get_texture_data(); // bottom-up rows, flip if needed
+/// ```
+pub fn render_to_image(target: &RenderTarget, camera: Camera2D, draw: impl FnOnce()) -> Image {
+    push_camera_state();
+    set_camera(&Camera2D {
+        render_target: Some(target.clone()),
+        ..camera
+    });
+    draw();
+    pop_camera_state();
+
+    let mut image = target.texture.get_texture_data();
+
+    // GL texture rows start at the bottom, flip so row 0 is the top.
+    let row = image.width as usize * 4;
+    let rows = image.height as usize;
+    for y in 0..rows / 2 {
+        let (top, bottom) = image.bytes.split_at_mut((rows - 1 - y) * row);
+        top[y * row..(y + 1) * row].swap_with_slice(&mut bottom[..row]);
+    }
+
+    image
 }
 
 pub(crate) struct CameraState {

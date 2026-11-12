@@ -76,6 +76,20 @@ async fn game() {
                 }
             }
 
+            // render_to_image: a rect at the top-left of camera space must be at the top of the image.
+            let rti_rt = render_target(100, 50);
+            let img = render_to_image(
+                &rti_rt,
+                Camera2D::from_display_rect(Rect::new(0., 0., 100., 50.)),
+                || draw_rectangle(0., 0., 10., 10., RED),
+            );
+            if !near(img.get_pixel(5, 5), RED) || near(img.get_pixel(5, 44), RED) {
+                failures.push("render_to_image: image is not top-down");
+            }
+            if near(img.get_pixel(95, 5), RED) {
+                failures.push("render_to_image: red rect covers the whole image");
+            }
+
             let leak = leak_rt.texture.get_texture_data();
             if leak.get_image_data().iter().any(|p| p[0] > 250 && p[1] < 5 && p[2] > 250) {
                 failures.push("camera leaked across frames: default drawing hit old target");
