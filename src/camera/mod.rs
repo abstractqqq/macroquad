@@ -9,7 +9,9 @@ use crate::{
 };
 #[cfg(feature = "3d")]
 use glam::Vec3;
-use glam::{vec2, vec3, Mat4, Vec2};
+use glam::{vec2, Mat4, Vec2};
+#[cfg(feature = "3d")]
+use glam::vec3;
 
 pub trait Camera {
     fn matrix(&self) -> Mat4;
@@ -75,35 +77,88 @@ impl Default for Camera2D {
     }
 }
 
+impl Camera2D {
+    /// The linear part of the camera transform: `(zoom_x, zoom_y, cos, sin)`.
+    ///
+    /// Zoom Y includes the flip applied when drawing to the screen (render targets are
+    /// already upside down, so they are not flipped).
+    ///
+    /// KEEP IN SYNC: `matrix()`, `world_to_ndc()` and `ndc_to_world()` are closed-form
+    /// versions of the same transform and must agree with each other. If you change
+    /// one of them, change the others (a unit test checks this).
+    fn basis(&self) -> (f32, f32, f32, f32) {
+        let invert_y = if self.render_target.is_some() { 1.0 } else { -1.0 };
+        let (sin, cos) = self.rotation.to_radians().sin_cos();
+        (self.zoom.x, self.zoom.y * invert_y, cos, sin)
+    }
+
+    /// World position to clip space. Same transform as `matrix()`.
+    fn world_to_ndc(&self, point: Vec2) -> Vec2 {
+        let (zx, zy, c, s) = self.basis();
+        let d = point - self.target;
+        vec2(
+            zx * (c * d.x - s * d.y) + self.offset.x,
+            zy * (s * d.x + c * d.y) + self.offset.y,
+        )
+    }
+
+    /// Clip space to world position. Inverse of `world_to_ndc()`: undo the offset,
+    /// undo the zoom, rotate back, then add the target. A zoom of zero on either
+    /// axis is not invertible.
+    fn ndc_to_world(&self, ndc: Vec2) -> Vec2 {
+        let (zx, zy, c, s) = self.basis();
+        let a = vec2((ndc.x - self.offset.x) / zx, (ndc.y - self.offset.y) / zy);
+        vec2(
+            c * a.x + s * a.y + self.target.x,
+            -s * a.x + c * a.y + self.target.y,
+        )
+    }
+
+    /// Screen rectangle (window space, y down) that this camera renders to.
+    fn screen_rect(&self) -> Rect {
+        match self.viewport() {
+            Some((vx, vy, vw, vh)) => Rect {
+                x: vx as f32,
+                y: screen_height() - (vy + vh) as f32,
+                w: vw as f32,
+                h: vh as f32,
+            },
+            None => Rect {
+                x: 0.0,
+                y: 0.0,
+                w: screen_width(),
+                h: screen_height(),
+            },
+        }
+    }
+}
+
 impl Camera for Camera2D {
+    /// World space to clip space (NDC):
+    ///
+    /// `ndc = offset + S * R * (world - target)`
+    ///
+    /// where `R` is the rotation and `S = diag(zoom.x, zoom.y * flip)`. This is the same
+    /// as `T(offset) * S * R * T(-target)`, written out by hand so no matrix multiplies
+    /// are needed. Follows raylib's `GetCameraMatrix2D` except that there is no separate
+    /// orthographic projection, so `offset` is in NDC units, not pixels.
+    ///
+    /// KEEP IN SYNC with `basis()`, `world_to_ndc()` and `ndc_to_world()`.
     fn matrix(&self) -> Mat4 {
-        // gleaned from https://github.com/raysan5/raylib/blob/master/src/core.c#L1528
+        let (zx, zy, c, s) = self.basis();
+        let (tx, ty) = (self.target.x, self.target.y);
 
-        // The camera in world-space is set by
-        //   1. Move it to target
-        //   2. Rotate by -rotation and scale by (1/zoom)
-        //      When setting higher scale, it's more intuitive for the world to become bigger (= camera become smaller),
-        //      not for the camera getting bigger, hence the invert. Same deal with rotation.
-        //   3. Move it by (-offset);
-        //      Offset defines target transform relative to screen, but since we're effectively "moving" screen (camera)
-        //      we need to do it into opposite direction (inverse transform)
-
-        // Having camera transform in world-space, inverse of it gives the modelview transform.
-        // Since (A*B*C)' = C'*B'*A', the modelview is
-        //   1. Move to offset
-        //   2. Rotate and Scale
-        //   3. Move by -target
-        let mat_origin = Mat4::from_translation(vec3(-self.target.x, -self.target.y, 0.0));
-        let mat_rotation = Mat4::from_axis_angle(vec3(0.0, 0.0, 1.0), self.rotation.to_radians());
-        let invert_y = if self.render_target.is_some() {
-            1.0
-        } else {
-            -1.0
-        };
-        let mat_scale = Mat4::from_scale(vec3(self.zoom.x, self.zoom.y * invert_y, 1.0));
-        let mat_translation = Mat4::from_translation(vec3(self.offset.x, self.offset.y, 0.0));
-
-        mat_translation * ((mat_scale * mat_rotation) * mat_origin)
+        Mat4::from_cols(
+            glam::vec4(zx * c, zy * s, 0.0, 0.0),
+            glam::vec4(-zx * s, zy * c, 0.0, 0.0),
+            glam::vec4(0.0, 0.0, 1.0, 0.0),
+            glam::vec4(
+                self.offset.x - zx * (c * tx - s * ty),
+                self.offset.y - zy * (s * tx + c * ty),
+                0.0,
+                1.0,
+            ),
+        )
     }
 
     fn depth_enabled(&self) -> bool {
@@ -125,27 +180,12 @@ impl Camera2D {
     /// Screen position in window space - from (0, 0) to (screen_width, screen_height()).
     /// When a viewport is set, returns coordinates within that viewport's screen region.
     pub fn world_to_screen(&self, point: Vec2) -> Vec2 {
-        let dims = self
-            .viewport()
-            .map(|(vx, vy, vw, vh)| Rect {
-                x: vx as f32,
-                y: screen_height() - (vy + vh) as f32,
-                w: vw as f32,
-                h: vh as f32,
-            })
-            .unwrap_or(Rect {
-                x: 0.0,
-                y: 0.0,
-                w: screen_width(),
-                h: screen_height(),
-            });
-
-        let mat = self.matrix();
-        let transform = mat.transform_point3(vec3(point.x, point.y, 0.));
+        let dims = self.screen_rect();
+        let ndc = self.world_to_ndc(point);
 
         vec2(
-            (transform.x / 2. + 0.5) * dims.w + dims.x,
-            (0.5 - transform.y / 2.) * dims.h + dims.y,
+            (ndc.x / 2. + 0.5) * dims.w + dims.x,
+            (0.5 - ndc.y / 2.) * dims.h + dims.y,
         )
     }
 
@@ -153,29 +193,13 @@ impl Camera2D {
     ///
     /// Point is a screen space position, often mouse x and y.
     pub fn screen_to_world(&self, point: Vec2) -> Vec2 {
-        let dims = self
-            .viewport()
-            .map(|(vx, vy, vw, vh)| Rect {
-                x: vx as f32,
-                y: screen_height() - (vy + vh) as f32,
-                w: vw as f32,
-                h: vh as f32,
-            })
-            .unwrap_or(Rect {
-                x: 0.0,
-                y: 0.0,
-                w: screen_width(),
-                h: screen_height(),
-            });
-
-        let point = vec2(
+        let dims = self.screen_rect();
+        let ndc = vec2(
             (point.x - dims.x) / dims.w * 2. - 1.,
             1. - (point.y - dims.y) / dims.h * 2.,
         );
-        let inv_mat = self.matrix().inverse();
-        let transform = inv_mat.transform_point3(vec3(point.x, point.y, 0.));
 
-        vec2(transform.x, transform.y)
+        self.ndc_to_world(ndc)
     }
 }
 
@@ -339,5 +363,39 @@ pub fn pop_camera_state() {
         context.gl.viewport(camera_state.viewport);
         context.gl.depth_test(camera_state.depth_test);
         context.camera_matrix = camera_state.matrix;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::vec3;
+
+    /// The original, straightforward construction (raylib's GetCameraMatrix2D).
+    fn reference_matrix(c: &Camera2D) -> Mat4 {
+        let invert_y = if c.render_target.is_some() { 1.0 } else { -1.0 };
+        Mat4::from_translation(vec3(c.offset.x, c.offset.y, 0.0))
+            * (Mat4::from_scale(vec3(c.zoom.x, c.zoom.y * invert_y, 1.0))
+                * Mat4::from_axis_angle(vec3(0., 0., 1.), c.rotation.to_radians())
+                * Mat4::from_translation(vec3(-c.target.x, -c.target.y, 0.0)))
+    }
+
+    #[test]
+    fn closed_form_matches_matrix_and_roundtrips() {
+        let cam = Camera2D {
+            rotation: 37.0,
+            zoom: vec2(0.004, -0.0025),
+            target: vec2(120.0, -45.0),
+            offset: vec2(0.1, -0.2),
+            ..Default::default()
+        };
+        assert!(cam.matrix().abs_diff_eq(reference_matrix(&cam), 1e-5));
+
+        for p in [vec2(0., 0.), vec2(300., 200.), vec2(-50., 75.)] {
+            let ndc = cam.world_to_ndc(p);
+            let via_matrix = cam.matrix().transform_point3(vec3(p.x, p.y, 0.));
+            assert!((ndc - vec2(via_matrix.x, via_matrix.y)).length() < 1e-4);
+            assert!((cam.ndc_to_world(ndc) - p).length() < 1e-2);
+        }
     }
 }
