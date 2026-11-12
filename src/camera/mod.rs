@@ -313,6 +313,7 @@ pub fn set_default_camera() {
 pub(crate) struct CameraState {
     render_pass: Option<miniquad::RenderPass>,
     depth_test: bool,
+    viewport: Option<(i32, i32, i32, i32)>,
     matrix: Option<Mat4>,
 }
 
@@ -322,6 +323,7 @@ pub fn push_camera_state() {
     let camera_state = CameraState {
         render_pass: context.gl.get_active_render_pass(),
         depth_test: context.gl.is_depth_test_enabled(),
+        viewport: context.gl.get_viewport_override(),
         matrix: context.camera_matrix,
     };
     context.camera_stack.push(camera_state);
@@ -334,6 +336,7 @@ pub fn pop_camera_state() {
         context.perform_render_passes();
 
         context.gl.render_pass(camera_state.render_pass);
+        context.gl.viewport(camera_state.viewport);
         context.gl.depth_test(camera_state.depth_test);
         context.camera_matrix = camera_state.matrix;
     }

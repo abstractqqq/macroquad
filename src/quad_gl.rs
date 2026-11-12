@@ -740,6 +740,9 @@ impl QuadGl {
     pub fn reset(&mut self) {
         self.state.clip = None;
         self.state.texture = None;
+        self.state.render_pass = None;
+        self.state.viewport = None;
+        self.state.depth_test_enable = false;
         self.state.model_stack.clear();
         self.state.model_stack.push(glam::Mat4::IDENTITY);
 
@@ -914,6 +917,11 @@ impl QuadGl {
 
     pub fn viewport(&mut self, viewport: Option<(i32, i32, i32, i32)>) {
         self.state.viewport = viewport;
+    }
+
+    /// Raw viewport override as set by the active camera (None = full target).
+    pub const fn get_viewport_override(&self) -> Option<(i32, i32, i32, i32)> {
+        self.state.viewport
     }
 
     pub fn get_viewport(&self) -> (i32, i32, i32, i32) {

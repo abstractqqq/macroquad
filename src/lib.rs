@@ -323,13 +323,13 @@ impl Context {
 
         get_quad_context().clear(Some((color.r, color.g, color.b, color.a)), None, None);
         self.gl.reset();
+        // a camera left active by the previous frame must not leak into this one
+        self.camera_matrix = None;
+        self.camera_stack.clear();
     }
 
     fn end_frame(&mut self) {
         self.perform_render_passes();
-
-        let screen_mat = self.pixel_perfect_projection_matrix();
-        self.gl.draw(get_quad_context(), screen_mat);
 
         get_quad_context().commit_frame();
 
