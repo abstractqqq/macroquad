@@ -839,6 +839,10 @@ impl Texture2D {
             TextureFormat::Alpha => miniquad::gl::GL_R8,
         };
         unsafe {
+            // Bypassing miniquad's binding cache: remember what was bound so we can put it back,
+            // otherwise the cache keeps believing the old texture is bound on this unit.
+            let mut previous = 0i32;
+            gl::glGetIntegerv(0x8069, &mut previous);
             gl::glBindTexture(gl::GL_TEXTURE_2D, raw_id);
             gl::glCopyTexImage2D(
                 gl::GL_TEXTURE_2D,
@@ -850,6 +854,7 @@ impl Texture2D {
                 params.height as _,
                 0,
             );
+            gl::glBindTexture(gl::GL_TEXTURE_2D, previous as _);
         }
     }
 
