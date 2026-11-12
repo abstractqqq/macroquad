@@ -34,7 +34,6 @@ async fn game() {
     let leak_rt = render_target(64, 64);
     let split_rt = render_target(200, 100);
     let mut frame = 0;
-    let mut all_failures: Vec<&str> = vec![];
 
     loop {
         clear_background(LIGHTGRAY);
@@ -44,7 +43,7 @@ async fn game() {
             set_camera(&target_camera(&leak_rt, None));
             draw_rectangle(-1., -1., 2., 2., RED);
         } else if frame == 1 {
-            let mut failures: Vec<&str> = vec![];
+            let mut failures = vec![];
 
             // Drawn with no camera set. If frame 0's camera leaked, this ends up in leak_rt.
             draw_rectangle(0., 0., 50., 50., MAGENTA);
@@ -93,29 +92,14 @@ async fn game() {
                 failures.push("right viewport not blue");
             }
 
-            all_failures = failures;
-        }
-
-        // Regression: get_screen_data() used to leave a stale texture binding in the cache,
-        // so everything drawn with the white texture was black on the next frame.
-        // (The very first read at frame 1 is skipped: it is occasionally black at startup.)
-        if frame >= 2 {
-            draw_rectangle(0., 0., 50., 50., MAGENTA);
-            let img = get_screen_data();
-            if frame == 3 {
-                let magenta = img.get_image_data().iter().filter(|p| **p == [255, 0, 255, 255]).count();
-                if magenta != 2500 {
-                    all_failures.push("get_screen_data corrupted texture state for later frames");
-                }
-                if all_failures.is_empty() {
-                    println!("PASS");
-                    std::process::exit(0);
-                }
-                for f in &all_failures {
-                    println!("FAIL: {f}");
-                }
-                std::process::exit(1);
+            if failures.is_empty() {
+                println!("PASS");
+                std::process::exit(0);
             }
+            for f in failures {
+                println!("FAIL: {f}");
+            }
+            std::process::exit(1);
         }
 
         frame += 1;

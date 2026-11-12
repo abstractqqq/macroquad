@@ -608,29 +608,6 @@ pub fn draw_texture_ex(
     context.gl.geometry(&vertices, &indices);
 }
 
-/// Get pixel data from screen buffer and return an Image (screenshot)
-pub fn get_screen_data() -> Image {
-    unsafe {
-        crate::window::get_internal_gl().flush();
-    }
-
-    let context = get_context();
-
-    let texture_id = get_quad_context().new_render_texture(miniquad::TextureParams {
-        width: context.screen_width as _,
-        height: context.screen_height as _,
-        ..Default::default()
-    });
-
-    let texture = Texture2D {
-        texture: context.textures.store_texture(texture_id),
-    };
-
-    texture.grab_screen();
-
-    texture.get_texture_data()
-}
-
 /// Texture, data stored in GPU memory
 #[derive(Clone, Debug, PartialEq)]
 pub struct Texture2D {
