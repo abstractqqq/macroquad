@@ -874,7 +874,7 @@ impl QuadGl {
             }
         }
         self.stats.draw_calls = self.draw_calls_count;
-        self.stats.passes = self.draw_calls_count;
+        let mut passes = 0;
 
         let white_texture = self.white_texture;
 
@@ -897,6 +897,10 @@ impl QuadGl {
         let time = crate::time::get_time() as f32;
         let time = glam::vec4(time, time.sin(), time.cos(), 0.);
 
+        // The pass currently open, if any. Consecutive draw calls into the
+        // same target share one pass.
+        let mut open_pass: Option<Option<RenderPass>> = None;
+
         for dc in &mut self.draw_calls[0..self.draw_calls_count] {
             let pipeline = self.pipelines.get_quad_pipeline_mut(dc.pipeline);
 
@@ -909,15 +913,26 @@ impl QuadGl {
             };
 
             if pipeline.wants_screen_texture {
+                // The snapshot reads the target and runs its own pass, so
+                // everything drawn so far must be finished first.
+                if open_pass.take().is_some() {
+                    ctx.end_render_pass();
+                }
                 self.state.snapshotter.snapshot(ctx, dc.render_pass);
             }
 
-            if let Some(render_pass) = dc.render_pass {
-                ctx.begin_pass(Some(render_pass), PassAction::Nothing);
-            } else {
-                ctx.begin_default_pass(PassAction::Nothing);
+            if open_pass != Some(dc.render_pass) {
+                if open_pass.is_some() {
+                    ctx.end_render_pass();
+                }
+                if let Some(render_pass) = dc.render_pass {
+                    ctx.begin_pass(Some(render_pass), PassAction::Nothing);
+                } else {
+                    ctx.begin_default_pass(PassAction::Nothing);
+                }
+                open_pass = Some(dc.render_pass);
+                passes += 1;
             }
-
 
             let mut images = [white_texture; MAX_SHADERSTAGE_IMAGES];
             images[0] = dc.texture.unwrap_or(white_texture);
@@ -962,13 +977,17 @@ impl QuadGl {
                 pipeline.uniforms_data.len(),
             );
             ctx.draw(dc.indices_start as i32, dc.indices_count as i32, 1);
-            ctx.end_render_pass();
 
             dc.vertices_count = 0;
             dc.indices_count = 0;
             dc.vertices_start = 0;
             dc.indices_start = 0;
         }
+
+        if open_pass.is_some() {
+            ctx.end_render_pass();
+        }
+        self.stats.passes = passes;
 
         self.draw_calls_count = 0;
         self.batch_index_buffer.clear();
