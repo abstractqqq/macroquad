@@ -9,30 +9,51 @@ use crate::slotmap::{DefaultKey as TextureSlotId, SlotMap};
 use glam::{vec2, Vec2};
 use std::{io::Cursor, sync::Arc};
 
+mod qoi;
+
+pub(crate) use qoi::decode_qoi_rgba8;
+
+const PNG_MAGIC: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
+
 pub(crate) fn decode_png_rgba8(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), Error> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_ignore_text_chunk(true);
+    // CRC32/Adler-32 verification only catches corrupted files; skip it in release builds.
+    #[cfg(not(debug_assertions))]
+    decoder.ignore_checksums(true);
     decoder.set_transformations(png::Transformations::ALPHA | png::Transformations::STRIP_16);
 
     let mut reader = decoder.read_info()?;
+
+    // Validate dimensions before allocating the output buffer.
+    let (width, height) = reader.info().size();
+    let width = u16::try_from(width)
+        .map_err(|_| Error::UnknownError("PNG image width exceeds 65535 pixels"))?;
+    let height = u16::try_from(height)
+        .map_err(|_| Error::UnknownError("PNG image height exceeds 65535 pixels"))?;
+
+    let pixel_count = width as usize * height as usize;
     let output_size = reader
         .output_buffer_size()
         .ok_or(Error::UnknownError("PNG image is too large to decode"))?;
-    let mut decoded = vec![0; output_size];
+    // GrayscaleAlpha is expanded to RGBA in place, so reserve room for that up front.
+    let mut decoded = Vec::with_capacity(output_size.max(pixel_count * 4));
+    decoded.resize(output_size, 0);
     let info = reader.next_frame(&mut decoded)?;
     decoded.truncate(info.buffer_size());
 
-    let width = u16::try_from(info.width)
-        .map_err(|_| Error::UnknownError("PNG image width exceeds 65535 pixels"))?;
-    let height = u16::try_from(info.height)
-        .map_err(|_| Error::UnknownError("PNG image height exceeds 65535 pixels"))?;
-
     let rgba = match (info.color_type, info.bit_depth) {
         (png::ColorType::Rgba, png::BitDepth::Eight) => decoded,
-        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => decoded
-            .chunks_exact(2)
-            .flat_map(|pixel| [pixel[0], pixel[0], pixel[0], pixel[1]])
-            .collect(),
+        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => {
+            // Expand GA -> GGGA back to front: pixel i reads bytes 2i..2i+2 and writes
+            // 4i..4i+4, so a write never clobbers a source byte that is still unread.
+            decoded.resize(pixel_count * 4, 0);
+            for i in (0..pixel_count).rev() {
+                let (g, a) = (decoded[2 * i], decoded[2 * i + 1]);
+                decoded[4 * i..4 * i + 4].copy_from_slice(&[g, g, g, a]);
+            }
+            decoded
+        }
         _ => {
             return Err(Error::UnknownError(
                 "PNG decoder produced an unsupported pixel format",
@@ -41,6 +62,26 @@ pub(crate) fn decode_png_rgba8(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), Erro
     };
 
     Ok((width, height, rgba))
+}
+
+/// Decodes PNG or QOI bytes (detected by their magic bytes) into `(width, height, rgba8)`.
+pub(crate) fn decode_image_rgba8(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), Error> {
+    if bytes.starts_with(PNG_MAGIC) {
+        decode_png_rgba8(bytes)
+    } else if bytes.starts_with(qoi::QOI_MAGIC) {
+        decode_qoi_rgba8(bytes)
+    } else {
+        Err(Error::UnknownError(
+            "unrecognized image format (expected PNG or QOI)",
+        ))
+    }
+}
+
+fn with_path<T>(path: &str, result: Result<T, Error>) -> Result<T, Error> {
+    result.map_err(|error| Error::ImageDecodeError {
+        path: path.to_string(),
+        error: Box::new(error),
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -134,6 +175,28 @@ impl Image {
     /// Creates an Image from PNG encoded bytes.
     pub fn from_png_bytes(bytes: &[u8]) -> Result<Image, Error> {
         let (width, height, bytes) = decode_png_rgba8(bytes)?;
+
+        Ok(Image {
+            width,
+            height,
+            bytes,
+        })
+    }
+
+    /// Creates an Image from QOI encoded bytes.
+    pub fn from_qoi_bytes(bytes: &[u8]) -> Result<Image, Error> {
+        let (width, height, bytes) = decode_qoi_rgba8(bytes)?;
+
+        Ok(Image {
+            width,
+            height,
+            bytes,
+        })
+    }
+
+    /// Creates an Image from PNG or QOI encoded bytes, detecting the format from its header.
+    pub fn from_file_bytes(bytes: &[u8]) -> Result<Image, Error> {
+        let (width, height, bytes) = decode_image_rgba8(bytes)?;
 
         Ok(Image {
             width,
@@ -339,18 +402,18 @@ impl Image {
     }
 }
 
-/// Loads an [Image] from a file into CPU memory.
+/// Loads an [Image] from a PNG or QOI file into CPU memory.
 pub async fn load_image(path: &str) -> Result<Image, Error> {
     let bytes = load_file(path).await?;
 
-    Image::from_png_bytes(&bytes)
+    with_path(path, Image::from_file_bytes(&bytes))
 }
 
-/// Loads a [Texture2D] from a file into GPU memory.
+/// Loads a [Texture2D] from a PNG or QOI file into GPU memory.
 pub async fn load_texture(path: &str) -> Result<Texture2D, Error> {
     let bytes = load_file(path).await?;
 
-    Texture2D::from_png_bytes(&bytes)
+    with_path(path, Texture2D::from_file_bytes(&bytes))
 }
 
 #[derive(Debug, Clone)]
@@ -661,6 +724,20 @@ impl Texture2D {
         Ok(Self::from_rgba8(width, height, &bytes))
     }
 
+    /// Creates a Texture2D from QOI encoded bytes.
+    pub fn from_qoi_bytes(bytes: &[u8]) -> Result<Texture2D, Error> {
+        let (width, height, bytes) = decode_qoi_rgba8(bytes)?;
+
+        Ok(Self::from_rgba8(width, height, &bytes))
+    }
+
+    /// Creates a Texture2D from PNG or QOI encoded bytes, detecting the format from its header.
+    pub fn from_file_bytes(bytes: &[u8]) -> Result<Texture2D, Error> {
+        let (width, height, bytes) = decode_image_rgba8(bytes)?;
+
+        Ok(Self::from_rgba8(width, height, &bytes))
+    }
+
     /// Creates a Texture2D from an [Image].
     pub fn from_image(image: &Image) -> Texture2D {
         Texture2D::from_rgba8(image.width, image.height, &image.bytes)
@@ -689,13 +766,28 @@ impl Texture2D {
     /// # }
     /// ```
     pub fn from_rgba8(width: u16, height: u16, bytes: &[u8]) -> Texture2D {
-        let texture = get_quad_context().new_texture_from_rgba8(width, height, bytes);
-        let ctx = get_context();
-        let texture = ctx.textures.store_texture(texture);
-        let texture = Texture2D { texture };
-        texture.set_filter(ctx.default_filter_mode);
+        assert_eq!(width as usize * height as usize * 4, bytes.len());
 
-        texture
+        let ctx = get_context();
+        let filter = ctx.default_filter_mode;
+        let texture = get_quad_context().new_texture_from_data_and_format(
+            bytes,
+            miniquad::TextureParams {
+                kind: miniquad::TextureKind::Texture2D,
+                width: width as _,
+                height: height as _,
+                format: miniquad::TextureFormat::RGBA8,
+                wrap: miniquad::TextureWrap::Clamp,
+                min_filter: filter,
+                mag_filter: filter,
+                mipmap_filter: miniquad::MipmapFilterMode::None,
+                allocate_mipmaps: false,
+                sample_count: 1,
+            },
+        );
+        let texture = ctx.textures.store_texture(texture);
+
+        Texture2D { texture }
     }
 
     /// Uploads [Image] data to this texture.

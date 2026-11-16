@@ -85,3 +85,7 @@ required-features = ["3d"]
 # this allows companion crates in examples without two versions of rayquad
 [patch.crates-io]
 rayquad = { path = './' }
+
+[[bench]]
+name = "image_decode"
+harness = false

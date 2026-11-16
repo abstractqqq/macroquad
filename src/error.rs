@@ -7,6 +7,12 @@ pub enum Error {
     },
     ShaderError(miniquad::ShaderError),
     PngError(png::DecodingError),
+    QoiError(&'static str),
+    /// Decoding the image file at `path` failed.
+    ImageDecodeError {
+        path: String,
+        error: Box<Error>,
+    },
     UnknownError(&'static str),
     AudioError(String),
 }
