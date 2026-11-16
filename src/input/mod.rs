@@ -1,7 +1,5 @@
 //! Cross-platform mouse, keyboard (and gamepads soon) module.
 
-use crate::prelude::screen_height;
-use crate::prelude::screen_width;
 use crate::Vec2;
 use crate::{get_context, DroppedFile};
 pub use miniquad::{KeyCode, MouseButton};
@@ -389,20 +387,21 @@ pub fn mouse_position() -> (f32, f32) {
 
 /// Return mouse position in range [-1; 1].
 pub fn mouse_position_local() -> Vec2 {
-    let (pixels_x, pixels_y) = mouse_position();
+    let context = get_context();
 
-    convert_to_local(Vec2::new(pixels_x, pixels_y))
+    to_local(context, context.mouse_position / context.dpi_scale)
 }
 
 /// Returns the difference between the current mouse position and the mouse position on the previous frame.
 pub fn mouse_delta_position() -> Vec2 {
     let context = get_context();
 
-    let current_position = mouse_position_local();
+    let current_position = context.mouse_position;
     let last_position = context.last_mouse_position.unwrap_or(current_position);
 
     // Calculate the delta
-    last_position - current_position
+    let dpi = context.dpi_scale;
+    to_local(context, last_position / dpi) - to_local(context, current_position / dpi)
 }
 
 /// This is set to true by default, meaning touches will raise mouse events in addition to raising touch events.
@@ -419,18 +418,18 @@ pub fn simulate_mouse_with_touch(option: bool) {
 
 /// Return touches with positions in pixels.
 pub fn touches() -> Vec<Touch> {
-    get_context().touches.values().cloned().collect()
+    get_context().touches.clone()
 }
 
 /// Return touches with positions in range [-1; 1].
 pub fn touches_local() -> Vec<Touch> {
-    get_context()
+    let context = get_context();
+    context
         .touches
-        .values()
-        .map(|touch| {
-            let mut touch = touch.clone();
-            touch.position = convert_to_local(touch.position);
-            touch
+        .iter()
+        .map(|touch| Touch {
+            position: to_local(context, touch.position),
+            ..touch.clone()
         })
         .collect()
 }
@@ -530,8 +529,11 @@ pub fn is_mouse_button_released(btn: MouseButton) -> bool {
 }
 
 /// Convert a position in pixels to a position in the range [-1; 1].
-fn convert_to_local(pixel_pos: Vec2) -> Vec2 {
-    Vec2::new(pixel_pos.x / screen_width(), pixel_pos.y / screen_height()) * 2.0
+fn to_local(context: &crate::Context, pixel_pos: Vec2) -> Vec2 {
+    Vec2::new(
+        pixel_pos.x / context.logical_width,
+        pixel_pos.y / context.logical_height,
+    ) * 2.0
         - Vec2::new(1.0, 1.0)
 }
 

@@ -116,8 +116,8 @@ impl TexturesContext {
     pub fn new() -> TexturesContext {
         TexturesContext {
             textures: SlotMap::with_key(),
-            removed: Vec::with_capacity(100),
-            removed_render_passes: Vec::with_capacity(10),
+            removed: Vec::new(),
+            removed_render_passes: Vec::new(),
         }
     }
     fn schedule_removed(&mut self, texture: TextureSlotId) {

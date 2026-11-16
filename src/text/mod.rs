@@ -694,7 +694,7 @@ pub fn prepare_text_layout(
     let font = params
         .font
         .cloned()
-        .unwrap_or_else(|| context.fonts_storage.default_font.clone());
+        .unwrap_or_else(|| context.default_font.clone());
     let scale_x = params.font_scale * params.font_scale_aspect;
     let scale_y = params.font_scale;
     let base_scale = params.font_size as f32 / font.data.base_size;
@@ -856,7 +856,7 @@ pub fn draw_text_ex(
     }
     let context = get_context();
     // Borrow instead of cloning: avoids an atomic Arc increment/decrement per call.
-    let font = params.font.unwrap_or(&context.fonts_storage.default_font);
+    let font = params.font.unwrap_or(&context.default_font);
     context.text_renderer.draw(
         font,
         text,
@@ -879,7 +879,7 @@ pub fn measure_text(
     font_scale: f32,
 ) -> TextDimensions {
     let context = get_context();
-    let font = font.unwrap_or(&context.fonts_storage.default_font);
+    let font = font.unwrap_or(&context.default_font);
     context.text_renderer.measure(
         font,
         text.as_ref(),
@@ -966,7 +966,7 @@ pub fn wrap_text(
         return text.to_string();
     }
     // Lazy: only touch the global context when no font was given.
-    let font = font.unwrap_or_else(|| &get_context().fonts_storage.default_font);
+    let font = font.unwrap_or_else(|| &get_context().default_font);
     let fallback = font.data.get_glyph('?');
     let scale = font_size as f32 / font.data.base_size * font_scale;
     let mut output = String::with_capacity(text.len() + text.len() / 20 + 8);
@@ -1061,15 +1061,7 @@ pub fn get_text_center(
     )
 }
 
-pub(crate) struct FontsStorage {
-    pub(crate) default_font: Font,
-}
-
-impl FontsStorage {
-    pub(crate) fn new(
-        ctx: &mut miniquad::Context,
-        filter: miniquad::FilterMode,
-    ) -> Self {
+pub(crate) fn load_default_font(ctx: &mut miniquad::Context, filter: miniquad::FilterMode) -> Font {
         #[cfg(feature = "font-rasterize")]
         let default_font = Font::load_from_bytes(
             include_bytes!("../../assets/fonts/ProggyClean.ttf"),
@@ -1090,16 +1082,15 @@ impl FontsStorage {
         )
         .unwrap();
 
-        Self { default_font }
-    }
+    default_font
 }
 
 pub fn get_default_font() -> Font {
-    get_context().fonts_storage.default_font.clone()
+    get_context().default_font.clone()
 }
 
 pub fn set_default_font(font: Font) {
-    get_context().fonts_storage.default_font = font;
+    get_context().default_font = font;
 }
 
 pub fn camera_font_scale(world_font_size: f32) -> (u16, f32, f32) {

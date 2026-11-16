@@ -41,7 +41,6 @@ extern crate alloc;
 
 use miniquad::*;
 
-use foldhash::{HashMap, HashMapExt};
 use std::collections::VecDeque;
 use std::future::Future;
 use std::panic::AssertUnwindSafe;
@@ -162,7 +161,9 @@ pub(crate) mod thread_assert {
         }
     }
 
+    #[inline]
     pub fn same_thread() {
+        #[cfg(debug_assertions)]
         unsafe {
             thread_local! {
                 static CURRENT_THREAD_ID: std::thread::ThreadId = std::thread::current().id();
@@ -178,15 +179,20 @@ struct Context {
     screen_width: f32,
     screen_height: f32,
     dpi_scale: f32,
+    /// `screen_width / dpi_scale`, cached on resize
+    logical_width: f32,
+    /// `screen_height / dpi_scale`, cached on resize
+    logical_height: f32,
     blocking_event_loop: bool,
 
     simulate_mouse_with_touch: bool,
 
     keyboard: input::KeyboardState,
     mouse_buttons: input::MouseButtonState,
-    touches: HashMap<u64, input::Touch>,
+    touches: Vec<input::Touch>,
     chars_pressed_queue: VecDeque<char>,
     mouse_position: Vec2,
+    /// raw `mouse_position` at the end of the previous frame
     last_mouse_position: Option<Vec2>,
     mouse_wheel: Vec2,
 
@@ -199,7 +205,7 @@ struct Context {
     camera_matrix: Option<Mat4>,
 
     coroutines_context: experimental::coroutines::CoroutinesContext,
-    fonts_storage: text::FontsStorage,
+    default_font: text::Font,
     text_renderer: text::renderer::TextRenderer,
 
     pc_assets_folder: Option<Box<str>>,
@@ -235,14 +241,17 @@ impl Context {
         let (screen_width, screen_height) = miniquad::window::screen_size();
         let dpi_scale = miniquad::window::dpi_scale();
         let blocking_event_loop = miniquad::window::blocking_event_loop();
+        let now = miniquad::date::now();
 
         let text_renderer = text::renderer::TextRenderer::new();
-        let fonts_storage = text::FontsStorage::new(&mut ctx, default_filter_mode);
+        let default_font = text::load_default_font(&mut ctx, default_filter_mode);
 
         Context {
             screen_width,
             screen_height,
             dpi_scale,
+            logical_width: screen_width / dpi_scale,
+            logical_height: screen_height / dpi_scale,
             blocking_event_loop,
 
             simulate_mouse_with_touch: true,
@@ -250,7 +259,7 @@ impl Context {
             keyboard: input::KeyboardState::new(),
             chars_pressed_queue: VecDeque::new(),
             mouse_buttons: input::MouseButtonState::default(),
-            touches: HashMap::new(),
+            touches: Vec::new(),
             mouse_position: vec2(0., 0.),
             last_mouse_position: None,
             mouse_wheel: vec2(0., 0.),
@@ -267,7 +276,7 @@ impl Context {
                 draw_call_index_capacity,
             ),
 
-            fonts_storage,
+            default_font,
             text_renderer,
             camera_stack: vec![],
 
@@ -276,8 +285,8 @@ impl Context {
 
             pc_assets_folder: None,
 
-            start_time: miniquad::date::now(),
-            last_frame_time: miniquad::date::now(),
+            start_time: now,
+            last_frame_time: now,
             frame_time: 1. / 60.,
 
             unwind: false,
@@ -306,7 +315,8 @@ impl Context {
     fn begin_frame(&mut self) {
         let color = Self::DEFAULT_BG_COLOR;
 
-        get_quad_context().clear(Some((color.r, color.g, color.b, color.a)), None, None);
+        self.quad_context
+            .clear(Some((color.r, color.g, color.b, color.a)), None, None);
         self.gl.reset();
         // a camera left active by the previous frame must not leak into this one
         self.camera_matrix = None;
@@ -316,40 +326,36 @@ impl Context {
     fn end_frame(&mut self) {
         self.perform_render_passes();
 
-        get_quad_context().commit_frame();
+        self.quad_context.commit_frame();
 
         self.mouse_wheel = Vec2::new(0., 0.);
         self.keyboard.clear_frame();
         self.mouse_buttons.clear_frame();
-        self.last_mouse_position = Some(crate::prelude::mouse_position_local());
+        self.last_mouse_position = Some(self.mouse_position);
 
         self.quit_requested = false;
 
-        self.textures.garbage_collect(get_quad_context());
+        self.textures.garbage_collect(&mut self.quad_context);
 
         // remove all touches that were Ended or Cancelled
-        self.touches.retain(|_, touch| {
-            touch.phase != input::TouchPhase::Ended && touch.phase != input::TouchPhase::Cancelled
-        });
-
-        // change all Started or Moved touches to Stationary
-        for touch in self.touches.values_mut() {
-            if touch.phase == input::TouchPhase::Started || touch.phase == input::TouchPhase::Moved
-            {
+        // and change all Started or Moved touches to Stationary
+        self.touches.retain_mut(|touch| match touch.phase {
+            input::TouchPhase::Ended | input::TouchPhase::Cancelled => false,
+            input::TouchPhase::Started | input::TouchPhase::Moved => {
                 touch.phase = input::TouchPhase::Stationary;
+                true
             }
-        }
+            input::TouchPhase::Stationary => true,
+        });
 
         self.dropped_files.clear();
     }
 
     pub(crate) fn pixel_perfect_projection_matrix(&self) -> glam::Mat4 {
-        let dpi = self.dpi_scale;
-
         glam::camera::rh::proj::opengl::orthographic(
             0.,
-            self.screen_width / dpi,
-            self.screen_height / dpi,
+            self.logical_width,
+            self.logical_height,
             0.,
             -1.,
             1.,
@@ -410,6 +416,8 @@ impl EventHandler for Stage {
         context.screen_width = width;
         context.screen_height = height;
         context.dpi_scale = miniquad::window::dpi_scale();
+        context.logical_width = width / context.dpi_scale;
+        context.logical_height = height / context.dpi_scale;
 
         if context.blocking_event_loop {
             miniquad::window::schedule_update();
@@ -498,14 +506,15 @@ impl EventHandler for Stage {
     fn touch_event(&mut self, phase: TouchPhase, id: u64, x: f32, y: f32) {
         let context = get_context();
 
-        context.touches.insert(
+        let touch = input::Touch {
             id,
-            input::Touch {
-                id,
-                phase: phase.into(),
-                position: Vec2::new(x, y),
-            },
-        );
+            phase: phase.into(),
+            position: Vec2::new(x, y),
+        };
+        match context.touches.iter_mut().find(|t| t.id == id) {
+            Some(existing) => *existing = touch,
+            None => context.touches.push(touch),
+        }
 
         if context.simulate_mouse_with_touch {
             if phase == TouchPhase::Started {
@@ -551,10 +560,6 @@ impl EventHandler for Stage {
     fn key_up_event(&mut self, keycode: KeyCode, _modifiers: KeyMods) {
         let context = get_context();
         context.keyboard.release(keycode);
-
-        if context.blocking_event_loop {
-            //miniquad::window::schedule_update();
-        }
     }
 
     fn update(&mut self) {
@@ -609,9 +614,11 @@ impl EventHandler for Stage {
             }
         }
 
-        get_context().end_frame();
-        get_context().frame_time = date::now() - get_context().last_frame_time;
-        get_context().last_frame_time = date::now();
+        let context = get_context();
+        context.end_frame();
+        let now = date::now();
+        context.frame_time = now - context.last_frame_time;
+        context.last_frame_time = now;
     }
 
     fn window_restored_event(&mut self) {
@@ -640,7 +647,7 @@ impl EventHandler for Stage {
         context.keyboard.release_all();
 
         // Announce all touches as released
-        for (_, touch) in context.touches.iter_mut() {
+        for touch in context.touches.iter_mut() {
             touch.phase = input::TouchPhase::Ended;
         }
     }

@@ -57,14 +57,11 @@ pub unsafe fn get_internal_gl<'a>() -> InternalGlContext<'a> {
 }
 
 pub fn screen_width() -> f32 {
-    let context = get_context();
-    context.screen_width / context.dpi_scale
+    get_context().logical_width
 }
 
 pub fn screen_height() -> f32 {
-    let context = get_context();
-
-    context.screen_height / context.dpi_scale
+    get_context().logical_height
 }
 
 pub fn screen_dpi_scale() -> f32 {
