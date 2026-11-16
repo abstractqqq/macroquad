@@ -60,6 +60,8 @@ pub struct DrawStats {
     pub passes: usize,
     /// CPU time spent in the last `draw()`, in seconds.
     pub submit_seconds: f64,
+    /// CPU time spent in buffer uploads during the last `draw()`, in seconds.
+    pub upload_seconds: f64,
     /// Latest available GPU time of a whole `draw()`, in nanoseconds.
     /// Lags a few frames behind.
     pub gpu_ns: Option<u64>,
@@ -867,6 +869,7 @@ impl QuadGl {
 
     pub fn draw(&mut self, ctx: &mut miniquad::Context, projection: glam::Mat4) {
         let submit_start = miniquad::date::now();
+        let mut upload = 0.0;
         let gpu_timing = self.stats.gpu_timing && self.is_gl;
         if gpu_timing {
             if let Some(ns) = self.gpu_timer.begin() {
@@ -879,6 +882,7 @@ impl QuadGl {
         let white_texture = self.white_texture;
 
         let bindings = self.ensure_buffers(ctx);
+        let upload_start = miniquad::date::now();
         if !self.batch_vertex_buffer.is_empty() {
             ctx.buffer_update(
                 bindings.vertex_buffer,
@@ -889,6 +893,7 @@ impl QuadGl {
                 BufferSource::slice(&self.batch_index_buffer),
             );
         }
+        upload += miniquad::date::now() - upload_start;
 
         let (screen_width, screen_height) = {
             let context = crate::get_context();
@@ -998,6 +1003,7 @@ impl QuadGl {
             self.gpu_timer.end();
         }
         self.stats.submit_seconds = miniquad::date::now() - submit_start;
+        self.stats.upload_seconds = upload;
     }
 
     pub fn get_projection_matrix(&self) -> glam::Mat4 {

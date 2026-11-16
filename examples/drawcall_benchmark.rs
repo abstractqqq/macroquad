@@ -42,6 +42,7 @@ const IDLE_FRAMES: usize = 300;
 struct Samples {
     record: Vec<f64>,
     submit: Vec<f64>,
+    upload: Vec<f64>,
     gpu: Vec<f64>,
     frame: Vec<f64>,
 }
@@ -50,6 +51,7 @@ impl Samples {
     fn clear(&mut self) {
         self.record.clear();
         self.submit.clear();
+        self.upload.clear();
         self.gpu.clear();
         self.frame.clear();
     }
@@ -94,7 +96,7 @@ struct Row<'a> {
 
 fn report(row: &Row, samples: &Samples, stats: &DrawStats) {
     println!(
-        "{},{},{},{},{},{},{},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{:.2},{:.2},{:.1}",
+        "{},{},{},{},{},{},{},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{:.1},{:.2},{:.2},{:.1}",
         row.variant,
         row.capacity,
         row.workload,
@@ -106,6 +108,7 @@ fn report(row: &Row, samples: &Samples, stats: &DrawStats) {
         percentile(&samples.record, 95),
         percentile(&samples.submit, 50),
         percentile(&samples.submit, 95),
+        percentile(&samples.upload, 50),
         percentile(&samples.gpu, 50),
         percentile(&samples.gpu, 95),
         percentile(&samples.frame, 50),
@@ -156,6 +159,7 @@ async fn frame(
         let stats = stats();
         samples.record.push(micros(record_elapsed));
         samples.submit.push(stats.submit_seconds * 1_000_000.0);
+        samples.upload.push(stats.upload_seconds * 1_000_000.0);
         if let Some(ns) = stats.gpu_ns {
             samples.gpu.push(ns as f64 / 1000.0);
         }
@@ -207,7 +211,7 @@ async fn benchmark() {
 
     println!(
         "variant,capacity,workload,draw_calls,quads_per_dc,dc_actual,passes,\
-         record_p50_us,record_p95_us,submit_p50_us,submit_p95_us,gpu_p50_us,gpu_p95_us,\
+         record_p50_us,record_p95_us,submit_p50_us,submit_p95_us,upload_p50_us,gpu_p50_us,gpu_p95_us,\
          frame_p50_us,frame_p95_us,frame_p99_us,buffer_mib,buffer_peak_mib,rss_mib"
     );
 
