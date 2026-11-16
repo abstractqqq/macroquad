@@ -40,7 +40,9 @@ impl Material {
     }
 
     pub fn set_texture(&self, name: &str, texture: Texture2D) {
-        get_context().gl.set_texture(self.pipeline.0, name, texture);
+        let context = get_context();
+        let texture = context.raw_miniquad_id(&texture.texture);
+        context.gl.set_texture_id(self.pipeline.0, name, texture);
     }
 }
 

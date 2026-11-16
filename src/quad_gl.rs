@@ -46,6 +46,7 @@ type GpuVertex = PackedVertex;
 type GpuVertex = Vertex;
 
 /// Batching statistics, used by `examples/drawcall_benchmark.rs`.
+#[cfg(feature = "draw-stats")]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct DrawStats {
     /// Bytes currently allocated in quad_gl's batching GPU buffers.
@@ -69,6 +70,7 @@ pub struct DrawStats {
     pub gpu_timing: bool,
 }
 
+#[cfg(feature = "draw-stats")]
 impl DrawStats {
     fn alloc(&mut self, bytes: usize) {
         self.buffer_bytes += bytes;
@@ -81,16 +83,19 @@ impl DrawStats {
     }
 }
 
+#[cfg(feature = "draw-stats")]
 const GPU_QUERY_RING: usize = 4;
 
 /// Ring of `GL_TIME_ELAPSED` queries, read back `GPU_QUERY_RING` frames late
 /// so reading never stalls the pipeline.
+#[cfg(feature = "draw-stats")]
 #[derive(Default)]
 struct GpuTimer {
     queries: [u32; GPU_QUERY_RING],
     frame: usize,
 }
 
+#[cfg(feature = "draw-stats")]
 impl GpuTimer {
     /// Starts this frame's query. Returns the result of the query that
     /// previously used this slot, when available.
@@ -136,6 +141,7 @@ impl GpuTimer {
     fn end(&mut self) {}
 }
 
+#[cfg(feature = "draw-stats")]
 const fn vertex_buffer_bytes(vertices: usize) -> usize {
     vertices * std::mem::size_of::<GpuVertex>()
 }
@@ -151,6 +157,8 @@ pub struct GlPipeline(pub u8);
 
 pub struct DrawCall {
     pub model: glam::Mat4,
+    /// See `GlState::model_ids`.
+    model_id: u32,
 
     pub vertices_count: u32,
     pub indices_count: u32,
@@ -176,6 +184,7 @@ impl DrawCall {
         render_pass: Option<RenderPass>,
     ) -> DrawCall {
         DrawCall {
+            model_id: UNTRACKED_MODEL_ID,
             vertices_start: 0,
             indices_start: 0,
             vertices_count: 0,
@@ -331,7 +340,12 @@ impl MagicSnapshotter {
         }
     }
 
-    fn snapshot(&mut self, ctx: &mut miniquad::Context, camera_render_pass: Option<RenderPass>) {
+    fn snapshot(
+        &mut self,
+        ctx: &mut miniquad::Context,
+        camera_render_pass: Option<RenderPass>,
+        (screen_width, screen_height): (f32, f32),
+    ) {
         if let Some(camera_render_pass) = camera_render_pass {
             let texture = ctx.render_pass_texture(camera_render_pass);
             let camera = self
@@ -369,8 +383,6 @@ impl MagicSnapshotter {
             ctx.draw(0, 6, 1);
             ctx.end_render_pass();
         } else {
-            let context = crate::get_context();
-            let (screen_width, screen_height) = (context.screen_width, context.screen_height);
             if self.default_texture.is_none()
                 || self
                     .default_texture
@@ -402,7 +414,14 @@ pub struct GlState {
     pub draw_mode: DrawMode,
     pub clip: Option<(i32, i32, i32, i32)>,
     pub viewport: Option<(i32, i32, i32, i32)>,
+    /// Change through `push_model_matrix`/`pop_model_matrix`. Direct edits
+    /// that change the length fall back to comparing matrices when batching;
+    /// replacing the top entry in place is not detected.
     pub model_stack: Vec<glam::Mat4>,
+    /// Batching id of each `model_stack` entry. A new draw call starts when
+    /// the top id differs from the previous draw call's.
+    model_ids: Vec<u32>,
+    next_model_id: u32,
     pub pipeline: Option<GlPipeline>,
     pub depth_test_enable: bool,
 
@@ -416,7 +435,25 @@ impl GlState {
     fn model(&self) -> glam::Mat4 {
         *self.model_stack.last().unwrap()
     }
+
+    /// Id of the current model matrix, or `None` when `model_stack` was
+    /// edited directly and the ids are out of sync.
+    fn model_id(&self) -> Option<u32> {
+        (self.model_ids.len() == self.model_stack.len()).then(|| *self.model_ids.last().unwrap())
+    }
+
+    fn reset_model(&mut self) {
+        self.model_stack.clear();
+        self.model_stack.push(glam::Mat4::IDENTITY);
+        self.model_ids.clear();
+        self.model_ids.push(ROOT_MODEL_ID);
+    }
 }
+
+/// Id of the identity matrix at the bottom of the model stack.
+const ROOT_MODEL_ID: u32 = 0;
+/// Draw-call id meaning "matrix not tracked by id": never equal to a live id.
+const UNTRACKED_MODEL_ID: u32 = u32::MAX;
 
 #[derive(Clone, Debug)]
 pub struct Uniform {
@@ -748,8 +785,11 @@ pub struct QuadGl {
     pub batch_index_buffer: Vec<u32>,
     pub batch_uniform_buffer: Vec<u8>,
 
+    #[cfg(feature = "draw-stats")]
     pub stats: DrawStats,
+    #[cfg(feature = "draw-stats")]
     gpu_timer: GpuTimer,
+    #[cfg(feature = "draw-stats")]
     is_gl: bool,
 }
 
@@ -768,6 +808,8 @@ impl QuadGl {
                 viewport: None,
                 texture: None,
                 model_stack: vec![glam::Mat4::IDENTITY],
+                model_ids: vec![ROOT_MODEL_ID],
+                next_model_id: ROOT_MODEL_ID + 1,
                 draw_mode: DrawMode::Triangles,
                 pipeline: None,
                 break_batching: false,
@@ -788,8 +830,11 @@ impl QuadGl {
             max_vertices,
             max_indices,
 
+            #[cfg(feature = "draw-stats")]
             stats: DrawStats::default(),
+            #[cfg(feature = "draw-stats")]
             gpu_timer: GpuTimer::default(),
+            #[cfg(feature = "draw-stats")]
             is_gl: ctx.info().backend == Backend::OpenGl,
         }
     }
@@ -861,27 +906,57 @@ impl QuadGl {
         self.state.render_pass = None;
         self.state.viewport = None;
         self.state.depth_test_enable = false;
-        self.state.model_stack.clear();
-        self.state.model_stack.push(glam::Mat4::IDENTITY);
+        self.state.reset_model();
 
         self.draw_calls_count = 0;
     }
 
+    /// Submits the batched draw calls.
+    ///
+    /// Reads the screen size and time from the global context. Inside the
+    /// crate use [`Self::submit`], which takes them as arguments.
     pub fn draw(&mut self, ctx: &mut miniquad::Context, projection: glam::Mat4) {
+        let (screen_size, time) = {
+            let context = crate::get_context();
+            (
+                (context.screen_width, context.screen_height),
+                crate::time::get_time() as f32,
+            )
+        };
+        self.submit(ctx, projection, screen_size, time);
+    }
+
+    /// Submits the batched draw calls.
+    ///
+    /// `screen_size` is the default framebuffer size in pixels; `time` is the
+    /// value of the `_Time` uniform, in seconds since start.
+    pub(crate) fn submit(
+        &mut self,
+        ctx: &mut miniquad::Context,
+        projection: glam::Mat4,
+        screen_size: (f32, f32),
+        time: f32,
+    ) {
+        #[cfg(feature = "draw-stats")]
         let submit_start = miniquad::date::now();
-        let mut upload = 0.0;
+        #[cfg(feature = "draw-stats")]
         let gpu_timing = self.stats.gpu_timing && self.is_gl;
-        if gpu_timing {
-            if let Some(ns) = self.gpu_timer.begin() {
-                self.stats.gpu_ns = Some(ns);
+        #[cfg(feature = "draw-stats")]
+        {
+            if gpu_timing {
+                if let Some(ns) = self.gpu_timer.begin() {
+                    self.stats.gpu_ns = Some(ns);
+                }
             }
+            self.stats.draw_calls = self.draw_calls_count;
         }
-        self.stats.draw_calls = self.draw_calls_count;
+        #[cfg(feature = "draw-stats")]
         let mut passes = 0;
 
         let white_texture = self.white_texture;
 
         let bindings = self.ensure_buffers(ctx);
+        #[cfg(feature = "draw-stats")]
         let upload_start = miniquad::date::now();
         if !self.batch_vertex_buffer.is_empty() {
             ctx.buffer_update(
@@ -893,13 +968,10 @@ impl QuadGl {
                 BufferSource::slice(&self.batch_index_buffer),
             );
         }
-        upload += miniquad::date::now() - upload_start;
+        #[cfg(feature = "draw-stats")]
+        let upload = miniquad::date::now() - upload_start;
 
-        let (screen_width, screen_height) = {
-            let context = crate::get_context();
-            (context.screen_width, context.screen_height)
-        };
-        let time = crate::time::get_time() as f32;
+        let (screen_width, screen_height) = screen_size;
         let time = glam::vec4(time, time.sin(), time.cos(), 0.);
 
         // The pass currently open, if any. Consecutive draw calls into the
@@ -923,7 +995,9 @@ impl QuadGl {
                 if open_pass.take().is_some() {
                     ctx.end_render_pass();
                 }
-                self.state.snapshotter.snapshot(ctx, dc.render_pass);
+                self.state
+                    .snapshotter
+                    .snapshot(ctx, dc.render_pass, screen_size);
             }
 
             if open_pass != Some(dc.render_pass) {
@@ -936,7 +1010,10 @@ impl QuadGl {
                     ctx.begin_default_pass(PassAction::Nothing);
                 }
                 open_pass = Some(dc.render_pass);
-                passes += 1;
+                #[cfg(feature = "draw-stats")]
+                {
+                    passes += 1;
+                }
             }
 
             let mut images = [white_texture; MAX_SHADERSTAGE_IMAGES];
@@ -992,20 +1069,24 @@ impl QuadGl {
         if open_pass.is_some() {
             ctx.end_render_pass();
         }
-        self.stats.passes = passes;
 
         self.draw_calls_count = 0;
         self.batch_index_buffer.clear();
         self.batch_vertex_buffer.clear();
         self.batch_uniform_buffer.clear();
 
-        if gpu_timing {
-            self.gpu_timer.end();
+        #[cfg(feature = "draw-stats")]
+        {
+            if gpu_timing {
+                self.gpu_timer.end();
+            }
+            self.stats.passes = passes;
+            self.stats.submit_seconds = miniquad::date::now() - submit_start;
+            self.stats.upload_seconds = upload;
         }
-        self.stats.submit_seconds = miniquad::date::now() - submit_start;
-        self.stats.upload_seconds = upload;
     }
 
+    #[deprecated(note = "reads the global context while QuadGl is borrowed; use rayquad::camera::projection_matrix()")]
     pub fn get_projection_matrix(&self) -> glam::Mat4 {
         // get_projection_matrix is a way plugins used to get rayquad's current projection
         // back in the days when projection was a part of static batcher
@@ -1030,9 +1111,18 @@ impl QuadGl {
         self.state.depth_test_enable = enable;
     }
 
+    /// Sets the texture for the following geometry.
+    ///
+    /// Resolves the handle through the global context. Inside the crate use
+    /// [`Self::texture_id`] with an id resolved before borrowing `gl`.
     pub fn texture(&mut self, texture: Option<&Texture2D>) {
         let ctx = crate::get_context();
         self.state.texture = texture.map(|t| ctx.raw_miniquad_id(&t.texture));
+    }
+
+    /// Sets an already resolved texture for the following geometry.
+    pub(crate) fn texture_id(&mut self, texture: Option<miniquad::TextureId>) {
+        self.state.texture = texture;
     }
 
     pub fn scissor(&mut self, clip: Option<(i32, i32, i32, i32)>) {
@@ -1059,11 +1149,21 @@ impl QuadGl {
 
     pub fn push_model_matrix(&mut self, matrix: glam::Mat4) {
         self.state.model_stack.push(self.state.model() * matrix);
+        let id = self.state.next_model_id;
+        // Skip the reserved ids when wrapping around.
+        self.state.next_model_id = match id.wrapping_add(1) {
+            UNTRACKED_MODEL_ID => ROOT_MODEL_ID + 1,
+            next => next,
+        };
+        self.state.model_ids.push(id);
     }
 
     pub fn pop_model_matrix(&mut self) {
         if self.state.model_stack.len() > 1 {
             self.state.model_stack.pop();
+            if self.state.model_ids.len() > 1 {
+                self.state.model_ids.pop();
+            }
         }
     }
 
@@ -1104,7 +1204,10 @@ impl QuadGl {
             draw_call.texture != self.state.texture
                 || draw_call.clip != self.state.clip
                 || draw_call.viewport != self.state.viewport
-                || draw_call.model != self.state.model()
+                || match self.state.model_id() {
+                    Some(id) => draw_call.model_id != id,
+                    None => draw_call.model != self.state.model(),
+                }
                 || draw_call.pipeline != pip
                 || draw_call.render_pass != self.state.render_pass
                 || draw_call.draw_mode != self.state.draw_mode
@@ -1138,6 +1241,8 @@ impl QuadGl {
             self.draw_calls[self.draw_calls_count].clip = self.state.clip;
             self.draw_calls[self.draw_calls_count].viewport = self.state.viewport;
             self.draw_calls[self.draw_calls_count].model = self.state.model();
+            self.draw_calls[self.draw_calls_count].model_id =
+                self.state.model_id().unwrap_or(UNTRACKED_MODEL_ID);
             self.draw_calls[self.draw_calls_count].pipeline = pip;
             self.draw_calls[self.draw_calls_count].render_pass = self.state.render_pass;
             self.draw_calls[self.draw_calls_count].indices_start =
@@ -1190,6 +1295,16 @@ impl QuadGl {
     }
 
     pub fn set_texture(&mut self, pipeline: GlPipeline, name: &str, texture: Texture2D) {
+        self.set_texture_id(pipeline, name, texture.raw_miniquad_id());
+    }
+
+    /// [`Self::set_texture`] with an already resolved texture.
+    pub(crate) fn set_texture_id(
+        &mut self,
+        pipeline: GlPipeline,
+        name: &str,
+        texture: miniquad::TextureId,
+    ) {
         let pipeline = self.pipelines.get_quad_pipeline_mut(pipeline);
         let texture_index = pipeline
             .textures
@@ -1206,7 +1321,7 @@ impl QuadGl {
                     name, names
                 )
             });
-        pipeline.textures[texture_index].texture = Some(texture.raw_miniquad_id());
+        pipeline.textures[texture_index].texture = Some(texture);
     }
 
     pub(crate) fn update_drawcall_capacity(
@@ -1238,9 +1353,12 @@ impl QuadGl {
             }
             ctx.delete_buffer(bindings.vertex_buffer);
             ctx.delete_buffer(bindings.index_buffer);
-            self.stats.free(vertex_buffer_bytes(self.vertex_capacity));
-            self.stats
-                .free(self.index_capacity * std::mem::size_of::<u32>());
+            #[cfg(feature = "draw-stats")]
+            {
+                self.stats.free(vertex_buffer_bytes(self.vertex_capacity));
+                self.stats
+                    .free(self.index_capacity * std::mem::size_of::<u32>());
+            }
         }
 
         self.vertex_capacity = self
@@ -1264,9 +1382,12 @@ impl QuadGl {
                 BufferSource::empty::<u32>(self.index_capacity),
             ),
         };
-        self.stats.alloc(vertex_buffer_bytes(self.vertex_capacity));
-        self.stats
-            .alloc(self.index_capacity * std::mem::size_of::<u32>());
+        #[cfg(feature = "draw-stats")]
+        {
+            self.stats.alloc(vertex_buffer_bytes(self.vertex_capacity));
+            self.stats
+                .alloc(self.index_capacity * std::mem::size_of::<u32>());
+        }
         self.bindings = Some(bindings);
         bindings
     }

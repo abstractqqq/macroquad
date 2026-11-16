@@ -338,6 +338,12 @@ pub fn set_default_camera() {
     context.camera_matrix = None;
 }
 
+/// Current projection matrix: the active camera's, or the default
+/// pixel-perfect projection when no camera is set.
+pub fn projection_matrix() -> Mat4 {
+    get_context().projection_matrix()
+}
+
 /// Runs `draw` with `camera` rendering into `target`, then reads the target back as an [`Image`].
 ///
 /// Camera state (camera, viewport, render pass) is saved before and restored after, so this

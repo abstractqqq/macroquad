@@ -295,17 +295,7 @@ impl Context {
 
     /// Returns the handle for this texture.
     pub fn raw_miniquad_id(&self, handle: &TextureHandle) -> miniquad::TextureId {
-        match handle {
-            TextureHandle::Unmanaged(texture) => *texture,
-            TextureHandle::Managed(texture) => self
-                .textures
-                .texture(texture.0)
-                .unwrap_or(self.gl.white_texture),
-            TextureHandle::ManagedWeak(texture) => self
-                .textures
-                .texture(*texture)
-                .unwrap_or(self.gl.white_texture),
-        }
+        self.textures.resolve(handle, self.gl.white_texture)
     }
 
     /// Returns the files which have been dropped onto the window.
@@ -376,8 +366,18 @@ impl Context {
 
     pub(crate) fn perform_render_passes(&mut self) {
         let matrix = self.projection_matrix();
+        let screen_size = (self.screen_width, self.screen_height);
+        let time = (miniquad::date::now() - self.start_time) as f32;
 
-        self.gl.draw(get_quad_context(), matrix);
+        self.gl
+            .submit(&mut self.quad_context, matrix, screen_size, time);
+    }
+
+    /// Sets the texture for the following `gl` geometry, resolving the handle
+    /// without going through the global context.
+    pub(crate) fn set_gl_texture(&mut self, texture: Option<&texture::Texture2D>) {
+        let texture = texture.map(|t| self.raw_miniquad_id(&t.texture));
+        self.gl.texture_id(texture);
     }
 }
 

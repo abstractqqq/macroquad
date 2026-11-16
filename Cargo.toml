@@ -20,6 +20,9 @@ glam-serde = ["glam/serde"]
 glam-all = ["glam/all-types"]
 default = ["font-rasterize"]
 font-rasterize = ["dep:swash"]
+# Batching statistics on QuadGl (buffer bytes, submit/upload/GPU time).
+# Used by examples/drawcall_benchmark.rs; compiled out otherwise.
+draw-stats = []
 
 [package.metadata.android]
 assets = "examples/"
@@ -85,6 +88,10 @@ required-features = ["3d"]
 # this allows companion crates in examples without two versions of rayquad
 [patch.crates-io]
 rayquad = { path = './' }
+
+[[example]]
+name = "drawcall_benchmark"
+required-features = ["draw-stats"]
 
 [[bench]]
 name = "image_decode"

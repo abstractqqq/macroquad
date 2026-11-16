@@ -132,6 +132,18 @@ impl TexturesContext {
     pub fn texture(&self, texture: TextureSlotId) -> Option<miniquad::TextureId> {
         self.textures.get(texture).copied()
     }
+    /// Resolves a handle to its miniquad id, `fallback` for freed textures.
+    pub(crate) fn resolve(
+        &self,
+        handle: &TextureHandle,
+        fallback: miniquad::TextureId,
+    ) -> miniquad::TextureId {
+        match handle {
+            TextureHandle::Unmanaged(texture) => *texture,
+            TextureHandle::Managed(texture) => self.texture(texture.0).unwrap_or(fallback),
+            TextureHandle::ManagedWeak(texture) => self.texture(*texture).unwrap_or(fallback),
+        }
+    }
     // fn remove(&mut self, texture: TextureSlotId) {
     //     self.textures.remove(texture);
     // }
@@ -677,7 +689,7 @@ pub fn draw_texture_ex(
     ];
     let indices: [u16; 6] = [0, 1, 2, 0, 2, 3];
 
-    context.gl.texture(Some(texture));
+    context.set_gl_texture(Some(texture));
     context.gl.draw_mode(DrawMode::Triangles);
     context.gl.geometry(&vertices, &indices);
 }

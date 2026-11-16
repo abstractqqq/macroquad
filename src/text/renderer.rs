@@ -5,6 +5,7 @@ use crate::{
     math::{vec2, vec3},
     models::Vertex,
     quad_gl::{DrawMode, QuadGl},
+    texture::TexturesContext,
 };
 
 use super::{font_atlas::AtlasRect, line_break::can_break_between, Font, TextDimensions};
@@ -259,6 +260,7 @@ impl TextRenderer {
         scale_y: f32,
         rotation: f32,
         color: Color,
+        textures: &TexturesContext,
         gl: &mut QuadGl,
     ) -> TextDimensions {
         if text.is_empty() {
@@ -282,7 +284,7 @@ impl TextRenderer {
 
         let color: [u8; 4] = color.into();
 
-        gl.texture(Some(&texture));
+        gl.texture_id(Some(textures.resolve(&texture.texture, gl.white_texture)));
         gl.draw_mode(DrawMode::Triangles);
 
         self.batch_vertices.clear();
@@ -381,6 +383,7 @@ impl TextRenderer {
         color: Color,
         cluster_colors: Option<&[Option<[u8; 4]>]>,
         visible_clusters: usize,
+        textures: &TexturesContext,
         gl: &mut QuadGl,
     ) -> TextDimensions {
         let visible_clusters = visible_clusters.min(shaped.clusters.len());
@@ -395,7 +398,7 @@ impl TextRenderer {
         let inv_atlas_height = 1.0 / atlas_height;
         let color: [u8; 4] = color.into();
 
-        gl.texture(Some(&texture));
+        gl.texture_id(Some(textures.resolve(&texture.texture, gl.white_texture)));
         gl.draw_mode(DrawMode::Triangles);
 
         self.batch_vertices.clear();

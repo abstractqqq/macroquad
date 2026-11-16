@@ -770,6 +770,7 @@ pub fn draw_text_layout_ex(
         params
             .visible_clusters
             .unwrap_or_else(|| layout.cluster_count()),
+        &context.textures,
         &mut context.gl,
     )
 }
@@ -866,6 +867,7 @@ pub fn draw_text_ex(
         params.font_scale,
         params.rotation,
         params.color,
+        &context.textures,
         &mut context.gl,
     )
 }

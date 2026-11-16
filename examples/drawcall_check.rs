@@ -62,6 +62,28 @@ fn scene(red: &Texture2D, blue: &Texture2D, inner: &RenderTarget) {
     draw_rectangle_lines(10.0, 180.0, 100.0, 40.0, 2.0, PINK);
     draw_text("draw call check", 10.0, 240.0, 24.0, WHITE);
 
+    // Model matrices: nested push/pop per sprite, draws back at the root
+    // matrix, and repeated pushes of an identical matrix.
+    fn push(matrix: glam::Mat4) {
+        unsafe { get_internal_gl() }.quad_gl.push_model_matrix(matrix);
+    }
+    fn pop() {
+        unsafe { get_internal_gl() }.quad_gl.pop_model_matrix();
+    }
+    for i in 0..30 {
+        push(glam::Mat4::from_translation(glam::vec3(i as f32 * 8.0, 196.0, 0.0)));
+        draw_rectangle(0.0, 0.0, 6.0, 6.0, SKYBLUE);
+        push(glam::Mat4::from_rotation_z(0.3));
+        draw_rectangle(0.0, 8.0, 4.0, 4.0, GOLD);
+        pop();
+        draw_rectangle(0.0, 14.0, 2.0, 2.0, RED);
+        pop();
+        draw_rectangle(i as f32 * 8.0, 230.0, 3.0, 3.0, WHITE);
+        push(glam::Mat4::from_translation(glam::vec3(4.0, 0.0, 0.0)));
+        draw_rectangle(i as f32 * 8.0, 236.0, 2.0, 2.0, GREEN);
+        pop();
+    }
+
     // Nested render target, then draw it into the outer one.
     set_camera(&Camera2D {
         render_target: Some(inner.clone()),

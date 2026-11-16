@@ -59,7 +59,7 @@ mod models_3d {
     pub fn draw_mesh(mesh: &Mesh) {
         let context = get_context();
 
-        context.gl.texture(mesh.texture.as_ref());
+        context.set_gl_texture(mesh.texture.as_ref());
         context.gl.draw_mode(DrawMode::Triangles);
         context.gl.geometry(&mesh.vertices[..], &mesh.indices[..]);
     }
@@ -78,7 +78,7 @@ mod models_3d {
 
         let line = [Vertex::new2(start, uv, color), Vertex::new2(end, uv, color)];
 
-        context.gl.texture(None);
+        context.gl.texture_id(None);
         context.gl.draw_mode(DrawMode::Lines);
         context.gl.geometry(&line, &indices);
     }
@@ -136,7 +136,7 @@ mod models_3d {
 
         {
             let context = get_context();
-            context.gl.texture(texture);
+            context.set_gl_texture(texture);
         }
         draw_quad([v1, v2, v3, v4]);
     }
@@ -174,7 +174,7 @@ mod models_3d {
 
         {
             let context = get_context();
-            context.gl.texture(texture);
+            context.set_gl_texture(texture);
         }
         draw_quad([v1, v2, v3, v4]);
     }
@@ -224,7 +224,7 @@ mod models_3d {
 
     pub fn draw_cube(position: Vec3, size: Vec3, texture: Option<&Texture2D>, color: Color) {
         let context = get_context();
-        context.gl.texture(texture);
+        context.set_gl_texture(texture);
 
         let (x, y, z) = (position.x, position.y, position.z);
         let (width, height, length) = (size.x, size.y, size.z);
@@ -481,7 +481,7 @@ mod models_3d {
 
         let scale = vec3(radius, radius, radius);
 
-        context.gl.texture(texture);
+        context.set_gl_texture(texture);
         context.gl.draw_mode(params.draw_mode);
 
         for i in 0..rings + 1 {
@@ -625,7 +625,7 @@ mod models_3d {
 
         let sides = params.sides;
 
-        context.gl.texture(texture);
+        context.set_gl_texture(texture);
         context.gl.draw_mode(params.draw_mode);
 
         use std::f32::consts::PI;
