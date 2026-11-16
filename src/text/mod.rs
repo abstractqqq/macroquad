@@ -18,8 +18,6 @@ pub mod line_break;
 #[cfg(feature = "font-rasterize")]
 pub(crate) mod rasterizer;
 pub mod renderer;
-#[cfg(feature = "font-rasterize")]
-pub(crate) mod sdf;
 
 use self::font_atlas::{AtlasRect, FontAtlas};
 #[cfg(feature = "font-rasterize")]
@@ -41,35 +39,12 @@ pub struct GlyphMetric {
     pub advance: f32,
 }
 
-/// How a font's atlas texels are encoded.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum FontRenderMode {
-    /// Coverage bitmap. The atlas is drawn as is with the default text material.
-    #[default]
-    Bitmap,
-    /// Single-channel signed distance field, stored in the atlas alpha channel
-    /// (RGBA8 `[255, 255, 255, value]`).
-    ///
-    /// `value / 255 = 0.5` is the glyph edge. Each glyph is padded by `spread` texels, and
-    /// the value falls from `0.5` to `0` over that distance outside the edge (and rises to
-    /// `1` inside). The atlas always uses linear filtering.
-    ///
-    /// Rayquad does not ship an SDF shader: draw these fonts with your own material
-    /// (`gl_use_material`). See `examples/sdf_text.rs` for a reference shader.
-    Sdf {
-        /// Padding and distance range, in texels at the raster size. Must be at least 1.
-        /// Larger values allow wider outlines and glows but give less precision per step.
-        spread: u8,
-    },
-}
-
 pub struct FontData {
     pub atlas: Option<FontAtlas>,
     /// CPU copy of the atlas pixels, kept so the font can be re-exported with
     /// [`Font::export_baked`]. Set by TTF loading; `None` for baked fonts.
     pub atlas_image: Option<Arc<crate::texture::Image>>,
     pub base_size: f32,
-    pub render_mode: FontRenderMode,
     pub ascent: f32,
     pub descent: f32,
     pub line_gap: f32,
@@ -96,13 +71,7 @@ impl FontData {
         // Magic
         bytes.extend_from_slice(b"RQFN");
         // Version
-        bytes.extend_from_slice(&2u16.to_le_bytes());
-        // Render mode (v2)
-        let (mode, spread) = match self.render_mode {
-            FontRenderMode::Bitmap => (0u8, 0u8),
-            FontRenderMode::Sdf { spread } => (1, spread),
-        };
-        bytes.extend_from_slice(&[mode, spread]);
+        bytes.extend_from_slice(&1u16.to_le_bytes());
         // Global metrics
         bytes.extend_from_slice(&self.base_size.to_le_bytes());
         bytes.extend_from_slice(&self.ascent.to_le_bytes());
@@ -134,7 +103,7 @@ impl FontData {
         bytes.extend_from_slice(&code.to_le_bytes());
         if let Some(rect) = metric.rect {
             bytes.push(1);
-            // The format stores rect components as f32.
+            // The v1 format stores rect components as f32.
             for component in [rect.x, rect.y, rect.w, rect.h] {
                 bytes.extend_from_slice(&f32::from(component).to_le_bytes());
             }
@@ -147,37 +116,20 @@ impl FontData {
     }
 
     pub fn deserialize_baked(data: &[u8], atlas: Option<FontAtlas>) -> Result<Self, Error> {
-        if data.len() < 6 || &data[0..4] != b"RQFN" {
+        if data.len() < 26 || &data[0..4] != b"RQFN" {
             return Err(Error::FontError("Invalid font binary format"));
         }
-        // v1: no render mode (always bitmap). v2: mode and spread bytes after the version.
         let version = u16::from_le_bytes([data[4], data[5]]);
-        let (render_mode, header_end) = match version {
-            1 => (FontRenderMode::Bitmap, 6),
-            2 => {
-                if data.len() < 8 {
-                    return Err(Error::FontError("Truncated font binary data"));
-                }
-                let mode = match (data[6], data[7]) {
-                    (0, _) => FontRenderMode::Bitmap,
-                    (1, spread) if spread > 0 => FontRenderMode::Sdf { spread },
-                    _ => return Err(Error::FontError("Invalid render mode in font binary data")),
-                };
-                (mode, 8)
-            }
-            _ => return Err(Error::FontError("Unsupported font binary version")),
-        };
-        let metrics = data
-            .get(header_end..header_end + 20)
-            .ok_or(Error::FontError("Truncated font binary data"))?;
-        let field = |index: usize| metrics[index * 4..index * 4 + 4].try_into().unwrap();
-        let base_size = f32::from_le_bytes(field(0));
-        let ascent = f32::from_le_bytes(field(1));
-        let descent = f32::from_le_bytes(field(2));
-        let line_gap = f32::from_le_bytes(field(3));
-        let total_glyphs = u32::from_le_bytes(field(4)) as usize;
+        if version != 1 {
+            return Err(Error::FontError("Unsupported font binary version"));
+        }
+        let base_size = f32::from_le_bytes(data[6..10].try_into().unwrap());
+        let ascent = f32::from_le_bytes(data[10..14].try_into().unwrap());
+        let descent = f32::from_le_bytes(data[14..18].try_into().unwrap());
+        let line_gap = f32::from_le_bytes(data[18..22].try_into().unwrap());
+        let total_glyphs = u32::from_le_bytes(data[22..26].try_into().unwrap()) as usize;
 
-        let mut offset = header_end + 20;
+        let mut offset = 26;
         let mut ascii_glyphs = [None; 96];
         let mut extended_glyphs = Vec::new();
 
@@ -240,7 +192,6 @@ impl FontData {
             atlas,
             atlas_image: None,
             base_size,
-            render_mode,
             ascent,
             descent,
             line_gap,
@@ -257,11 +208,8 @@ pub struct FontLoadParams {
     pub characters: Vec<char>,
     /// Canonical raster size. Drawing scales these cached glyphs.
     pub raster_size: u16,
-    /// Texture filtering used by the finished atlas. Ignored for SDF fonts, which always
-    /// use [`miniquad::FilterMode::Linear`].
+    /// Texture filtering used by the finished atlas.
     pub filter: miniquad::FilterMode,
-    /// Bitmap (default) or signed distance field atlas.
-    pub render_mode: FontRenderMode,
 }
 
 impl Default for FontLoadParams {
@@ -270,7 +218,6 @@ impl Default for FontLoadParams {
             characters: Font::ascii_character_list(),
             raster_size: renderer::BASE_FONT_SIZE as u16,
             filter: miniquad::FilterMode::Linear,
-            render_mode: FontRenderMode::Bitmap,
         }
     }
 }
@@ -311,10 +258,6 @@ impl FontData {
                 "Font raster size must be greater than zero",
             ));
         }
-        if params.render_mode == (FontRenderMode::Sdf { spread: 0 }) {
-            return Err(Error::FontError("SDF spread must be greater than zero"));
-        }
-        let render_mode = params.render_mode;
 
         let mut atlas = FontAtlasBuilder::new();
         let mut rasterizer = Rasterizer::new();
@@ -344,12 +287,7 @@ impl FontData {
                 (None, 0, 0)
             } else if let Some(cached) = rasterized_cache.get(&glyph_id) {
                 *cached
-            } else if let Some(rendered) = match render_mode {
-                FontRenderMode::Bitmap => rasterizer.rasterize(bytes, 0, glyph_id, base_size),
-                FontRenderMode::Sdf { spread } => {
-                    rasterizer.rasterize_sdf(bytes, 0, glyph_id, base_size, spread)
-                }
-            } {
+            } else if let Some(rendered) = rasterizer.rasterize(bytes, 0, glyph_id, base_size) {
                 let rect = if rendered.image.width == 0 || rendered.image.height == 0 {
                     None
                 } else {
@@ -389,7 +327,6 @@ impl FontData {
                 // `Font::load_from_bytes` moves the image in after uploading it.
                 atlas_image: None,
                 base_size,
-                render_mode,
                 ascent: font_metrics.ascent,
                 descent: font_metrics.descent,
                 line_gap: font_metrics.leading,
@@ -408,7 +345,7 @@ impl Font {
         params: FontLoadParams,
         ctx: &mut miniquad::Context,
     ) -> Result<Self, Error> {
-        let filter = atlas_filter(params.render_mode, params.filter);
+        let filter = params.filter;
         let (mut font_data, image) = FontData::bake_from_ttf_bytes(bytes, params)?;
         let atlas = FontAtlas::from_rgba8(image.width, image.height, &image.bytes, filter, ctx);
         font_data.atlas = Some(atlas);
@@ -420,18 +357,15 @@ impl Font {
 
     /// Loads a pre-baked font from metric binary (`.bin`) and PNG atlas texture bytes.
     /// This works in production with 0 font dependencies.
-    ///
-    /// `filter` is ignored for SDF fonts, which always use linear filtering.
     pub fn load_baked_from_bytes(
         bin_bytes: &[u8],
         png_bytes: &[u8],
         filter: miniquad::FilterMode,
         ctx: &mut miniquad::Context,
     ) -> Result<Self, Error> {
-        let mut data = FontData::deserialize_baked(bin_bytes, None)?;
         let (width, height, rgba) = crate::texture::decode_png_rgba8(png_bytes)?;
-        let filter = atlas_filter(data.render_mode, filter);
-        data.atlas = Some(FontAtlas::from_rgba8(width, height, &rgba, filter, ctx));
+        let atlas = FontAtlas::from_rgba8(width, height, &rgba, filter, ctx);
+        let data = FontData::deserialize_baked(bin_bytes, Some(atlas))?;
         Ok(Self {
             data: Arc::new(data),
         })
@@ -477,11 +411,6 @@ impl Font {
         self.data.base_size
     }
 
-    /// Bitmap or SDF. An SDF font needs an SDF material to draw correctly.
-    pub fn render_mode(&self) -> FontRenderMode {
-        self.data.render_mode
-    }
-
     #[cfg(all(test, feature = "font-rasterize"))]
     pub(crate) fn load_for_test(bytes: &[u8]) -> Result<Self, Error> {
         let font = FontRef::from_index(bytes, 0).ok_or(Error::FontError(
@@ -514,7 +443,6 @@ impl Font {
                 atlas: None,
                 atlas_image: None,
                 base_size,
-                render_mode: FontRenderMode::Bitmap,
                 ascent: font_metrics.ascent,
                 descent: font_metrics.descent,
                 line_gap: font_metrics.leading,
@@ -580,7 +508,6 @@ mod font_tests {
             atlas: None,
             atlas_image: None,
             base_size: 32.0,
-            render_mode: super::FontRenderMode::Sdf { spread: 6 },
             ascent: 26.0,
             descent: 6.0,
             line_gap: 2.0,
@@ -592,97 +519,11 @@ mod font_tests {
         let loaded = super::FontData::deserialize_baked(&bin, None).unwrap();
 
         assert_eq!(loaded.base_size, 32.0);
-        assert_eq!(loaded.render_mode, super::FontRenderMode::Sdf { spread: 6 });
         assert_eq!(loaded.ascent, 26.0);
         assert_eq!(loaded.descent, 6.0);
         assert_eq!(loaded.line_gap, 2.0);
         assert_eq!(loaded.get_glyph(' '), font_data.get_glyph(' '));
         assert_eq!(loaded.get_glyph('中'), font_data.get_glyph('中'));
-    }
-
-    #[test]
-    fn version_1_binaries_load_as_bitmap() {
-        // v1 header: magic, version, 4 metrics, glyph count (0).
-        let mut bin = b"RQFN".to_vec();
-        bin.extend_from_slice(&1u16.to_le_bytes());
-        for value in [16.0f32, 12.0, 4.0, 1.0] {
-            bin.extend_from_slice(&value.to_le_bytes());
-        }
-        bin.extend_from_slice(&0u32.to_le_bytes());
-
-        let loaded = super::FontData::deserialize_baked(&bin, None).unwrap();
-        assert_eq!(loaded.render_mode, super::FontRenderMode::Bitmap);
-        assert_eq!((loaded.base_size, loaded.ascent), (16.0, 12.0));
-
-        // The bundled ProggyClean.bin is v1 or v2; either must load.
-        super::FontData::deserialize_baked(include_bytes!("../../assets/fonts/ProggyClean.bin"), None)
-            .unwrap();
-    }
-
-    #[test]
-    fn invalid_render_mode_is_rejected() {
-        for mode in [[1u8, 0], [2, 4]] {
-            let mut bin = b"RQFN".to_vec();
-            bin.extend_from_slice(&2u16.to_le_bytes());
-            bin.extend_from_slice(&mode);
-            bin.extend_from_slice(&[0; 20]);
-            assert!(super::FontData::deserialize_baked(&bin, None).is_err());
-        }
-    }
-
-    #[test]
-    #[cfg(feature = "font-rasterize")]
-    fn sdf_bake_pads_glyphs_and_keeps_advances() {
-        let ttf_bytes = include_bytes!("../../examples/DancingScriptRegular.ttf");
-        let characters = vec!['A', 'g', ' '];
-        let bake = |render_mode| {
-            super::FontData::bake_from_ttf_bytes(
-                ttf_bytes,
-                super::FontLoadParams {
-                    characters: characters.clone(),
-                    raster_size: 32,
-                    render_mode,
-                    ..Default::default()
-                },
-            )
-            .unwrap()
-        };
-        let spread = 4u8;
-        let (bitmap, _) = bake(super::FontRenderMode::Bitmap);
-        let (sdf, image) = bake(super::FontRenderMode::Sdf { spread });
-        assert_eq!(sdf.render_mode, super::FontRenderMode::Sdf { spread });
-
-        for ch in ['A', 'g'] {
-            let b = bitmap.get_glyph(ch).unwrap();
-            let s = sdf.get_glyph(ch).unwrap();
-            assert_eq!(b.advance, s.advance);
-            let (b_rect, s_rect) = (b.rect.unwrap(), s.rect.unwrap());
-            // Padding adds `spread` texels per side, give or take a pixel of unhinted bounds.
-            let spread = i32::from(spread);
-            assert!((i32::from(s_rect.w) - i32::from(b_rect.w) - 2 * spread).abs() <= 2);
-            assert!((i32::from(s_rect.h) - i32::from(b_rect.h) - 2 * spread).abs() <= 2);
-            assert!((i32::from(b.left) - i32::from(s.left) - spread).abs() <= 1);
-            assert!((i32::from(s.top) - i32::from(b.top) - spread).abs() <= 1);
-
-            // The padded border is outside the glyph, and some texel is inside it. Script
-            // strokes are only a few px wide at 32 px, so the peak stays well below 255.
-            let texel = |x: u16, y: u16| {
-                image.bytes[(usize::from(s_rect.y + y) * usize::from(image.width)
-                    + usize::from(s_rect.x + x))
-                    * 4
-                    + 3]
-            };
-            for x in 0..s_rect.w {
-                assert!(texel(x, 0) < 128 && texel(x, s_rect.h - 1) < 128);
-            }
-            let max = (0..s_rect.h)
-                .flat_map(|y| (0..s_rect.w).map(move |x| (x, y)))
-                .map(|(x, y)| texel(x, y))
-                .max()
-                .unwrap();
-            assert!(max > 140, "{ch}: max {max}");
-        }
-        assert!(sdf.get_glyph(' ').unwrap().rect.is_none());
     }
 
     #[test]
@@ -701,14 +542,6 @@ mod font_tests {
         encoder.set_depth(png::BitDepth::Eight);
         let mut writer = encoder.write_header().unwrap();
         writer.write_image_data(&image.bytes).unwrap();
-    }
-}
-
-/// SDF atlases rely on bilinear filtering to reconstruct the edge between texels.
-fn atlas_filter(mode: FontRenderMode, requested: miniquad::FilterMode) -> miniquad::FilterMode {
-    match mode {
-        FontRenderMode::Bitmap => requested,
-        FontRenderMode::Sdf { .. } => miniquad::FilterMode::Linear,
     }
 }
 
