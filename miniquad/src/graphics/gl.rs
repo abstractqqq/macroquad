@@ -1522,7 +1522,23 @@ impl RenderingBackend for GlContext {
         self.cache.store_buffer_binding(gl_target);
         self.cache
             .bind_buffer(gl_target, buffer.gl_buf, buffer.buffer_type.index_type());
-        unsafe { glBufferSubData(gl_target, 0, size as _, data.ptr as _) };
+        // Upload in pieces: on NVIDIA's driver a single glBufferSubData above
+        // roughly 256 KB-1 MB takes a much slower path than several smaller
+        // ones (measured with examples/drawcall_benchmark.rs).
+        const UPLOAD_CHUNK: usize = 64 * 1024;
+        let mut offset = 0;
+        while offset < size {
+            let len = UPLOAD_CHUNK.min(size - offset);
+            unsafe {
+                glBufferSubData(
+                    gl_target,
+                    offset as _,
+                    len as _,
+                    (data.ptr as *const u8).add(offset) as _,
+                )
+            };
+            offset += len;
+        }
         self.cache.restore_buffer_binding(gl_target);
     }
 
