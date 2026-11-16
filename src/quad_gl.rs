@@ -724,7 +724,13 @@ pub struct QuadGl {
     pub pipelines: PipelinesStorage,
 
     pub draw_calls: Vec<DrawCall>,
-    pub draw_calls_bindings: Vec<DrawCallBindings>,
+    /// One vertex and one index buffer shared by every draw call of a frame.
+    /// Created on first use and grown to the frame's high-water mark.
+    pub bindings: Option<DrawCallBindings>,
+    /// Capacity of `bindings.vertex_buffer`, in vertices.
+    vertex_capacity: usize,
+    /// Capacity of `bindings.index_buffer`, in indices.
+    index_capacity: usize,
     pub draw_calls_count: usize,
     pub state: GlState,
 
@@ -736,7 +742,8 @@ pub struct QuadGl {
     pub batch_vertex_buffer: Vec<Vertex>,
     #[cfg(feature = "3d")]
     pub batch_vertex_buffer: Vec<PackedVertex>,
-    pub batch_index_buffer: Vec<u16>,
+    /// Indices are absolute into `batch_vertex_buffer`, so they need 32 bits.
+    pub batch_index_buffer: Vec<u32>,
     pub batch_uniform_buffer: Vec<u8>,
 
     pub stats: DrawStats,
@@ -767,7 +774,9 @@ impl QuadGl {
                 render_pass: None,
             },
             draw_calls: Vec::with_capacity(200),
-            draw_calls_bindings: Vec::with_capacity(200),
+            bindings: None,
+            vertex_capacity: 0,
+            index_capacity: 0,
             draw_calls_count: 0,
 
             white_texture,
@@ -869,34 +878,17 @@ impl QuadGl {
 
         let white_texture = self.white_texture;
 
-        for _ in 0..self.draw_calls.len() - self.draw_calls_bindings.len() {
-            #[cfg(feature = "3d")]
-            let vertex_buffer = ctx.new_buffer(
-                BufferType::VertexBuffer,
-                BufferUsage::Stream,
-                BufferSource::empty::<PackedVertex>(self.max_vertices),
+        let bindings = self.ensure_buffers(ctx);
+        if !self.batch_vertex_buffer.is_empty() {
+            ctx.buffer_update(
+                bindings.vertex_buffer,
+                BufferSource::slice(&self.batch_vertex_buffer),
             );
-            #[cfg(not(feature = "3d"))]
-            let vertex_buffer = ctx.new_buffer(
-                BufferType::VertexBuffer,
-                BufferUsage::Stream,
-                BufferSource::empty::<Vertex>(self.max_vertices),
+            ctx.buffer_update(
+                bindings.index_buffer,
+                BufferSource::slice(&self.batch_index_buffer),
             );
-            let index_buffer = ctx.new_buffer(
-                BufferType::IndexBuffer,
-                BufferUsage::Stream,
-                BufferSource::empty::<u16>(self.max_indices),
-            );
-            let bindings = DrawCallBindings {
-                vertex_buffer,
-                index_buffer,
-            };
-            self.stats.alloc(vertex_buffer_bytes(self.max_vertices));
-            self.stats.alloc(self.max_indices * std::mem::size_of::<u16>());
-
-            self.draw_calls_bindings.push(bindings);
         }
-        assert_eq!(self.draw_calls_bindings.len(), self.draw_calls.len());
 
         let (screen_width, screen_height) = {
             let context = crate::get_context();
@@ -905,10 +897,7 @@ impl QuadGl {
         let time = crate::time::get_time() as f32;
         let time = glam::vec4(time, time.sin(), time.cos(), 0.);
 
-        for (dc, bindings) in self.draw_calls[0..self.draw_calls_count]
-            .iter_mut()
-            .zip(self.draw_calls_bindings.iter_mut())
-        {
+        for dc in &mut self.draw_calls[0..self.draw_calls_count] {
             let pipeline = self.pipelines.get_quad_pipeline_mut(dc.pipeline);
 
             let (width, height) = if let Some(render_pass) = dc.render_pass {
@@ -929,20 +918,6 @@ impl QuadGl {
                 ctx.begin_default_pass(PassAction::Nothing);
             }
 
-            ctx.buffer_update(
-                bindings.vertex_buffer,
-                BufferSource::slice(
-                    &self.batch_vertex_buffer[dc.vertices_start as usize
-                        ..(dc.vertices_start + dc.vertices_count) as usize],
-                ),
-            );
-            ctx.buffer_update(
-                bindings.index_buffer,
-                BufferSource::slice(
-                    &self.batch_index_buffer
-                        [dc.indices_start as usize..(dc.indices_start + dc.indices_count) as usize],
-                ),
-            );
 
             let mut images = [white_texture; MAX_SHADERSTAGE_IMAGES];
             images[0] = dc.texture.unwrap_or(white_texture);
@@ -986,7 +961,7 @@ impl QuadGl {
                 pipeline.uniforms_data.as_ptr(),
                 pipeline.uniforms_data.len(),
             );
-            ctx.draw(0, dc.indices_count as i32, 1);
+            ctx.draw(dc.indices_start as i32, dc.indices_count as i32, 1);
             ctx.end_render_pass();
 
             dc.vertices_count = 0;
@@ -1149,6 +1124,7 @@ impl QuadGl {
             self.state.break_batching = false;
         };
         let dc = &mut self.draw_calls[self.draw_calls_count - 1];
+        let base = u32::try_from(self.batch_vertex_buffer.len()).expect("Vertex batch exceeds u32");
 
         #[cfg(feature = "3d")]
         self.batch_vertex_buffer
@@ -1156,7 +1132,7 @@ impl QuadGl {
         #[cfg(not(feature = "3d"))]
         self.batch_vertex_buffer.extend(vertices);
         self.batch_index_buffer
-            .extend(indices.iter().map(|x| *x + dc.vertices_count as u16));
+            .extend(indices.iter().map(|x| u32::from(*x) + base));
 
         dc.vertices_count += vertices.len() as u32;
         dc.indices_count += indices.len() as u32;
@@ -1222,37 +1198,52 @@ impl QuadGl {
             draw_call.indices_start = 0;
             draw_call.vertices_start = 0;
         }
-        let old_bytes = self.stats.buffer_bytes;
-        for binding in &mut self.draw_calls_bindings {
-            ctx.delete_buffer(binding.index_buffer);
-            ctx.delete_buffer(binding.vertex_buffer);
-            #[cfg(feature = "3d")]
-            let vertex_buffer = ctx.new_buffer(
+        // The shared buffers are sized by actual usage, not by these limits.
+        let _ = ctx;
+    }
+
+    /// Returns the shared buffers, (re)creating them when this frame's batch
+    /// does not fit. Capacity only grows.
+    fn ensure_buffers(&mut self, ctx: &mut miniquad::Context) -> DrawCallBindings {
+        let vertices = self.batch_vertex_buffer.len();
+        let indices = self.batch_index_buffer.len();
+        if let Some(bindings) = self.bindings {
+            if vertices <= self.vertex_capacity && indices <= self.index_capacity {
+                return bindings;
+            }
+            ctx.delete_buffer(bindings.vertex_buffer);
+            ctx.delete_buffer(bindings.index_buffer);
+            self.stats.free(vertex_buffer_bytes(self.vertex_capacity));
+            self.stats
+                .free(self.index_capacity * std::mem::size_of::<u32>());
+        }
+
+        self.vertex_capacity = self
+            .vertex_capacity
+            .max(self.max_vertices)
+            .max(vertices.next_power_of_two());
+        self.index_capacity = self
+            .index_capacity
+            .max(self.max_indices)
+            .max(indices.next_power_of_two());
+
+        let bindings = DrawCallBindings {
+            vertex_buffer: ctx.new_buffer(
                 BufferType::VertexBuffer,
                 BufferUsage::Stream,
-                BufferSource::empty::<PackedVertex>(self.max_vertices),
-            );
-            #[cfg(not(feature = "3d"))]
-            let vertex_buffer = ctx.new_buffer(
-                BufferType::VertexBuffer,
-                BufferUsage::Stream,
-                BufferSource::empty::<Vertex>(self.max_vertices),
-            );
-            let index_buffer = ctx.new_buffer(
+                BufferSource::empty::<GpuVertex>(self.vertex_capacity),
+            ),
+            index_buffer: ctx.new_buffer(
                 BufferType::IndexBuffer,
                 BufferUsage::Stream,
-                BufferSource::empty::<u16>(self.max_indices),
-            );
-            *binding = DrawCallBindings {
-                vertex_buffer,
-                index_buffer,
-            };
-        }
-        self.stats.free(old_bytes);
-        for _ in 0..self.draw_calls_bindings.len() {
-            self.stats.alloc(vertex_buffer_bytes(self.max_vertices));
-            self.stats.alloc(self.max_indices * std::mem::size_of::<u16>());
-        }
+                BufferSource::empty::<u32>(self.index_capacity),
+            ),
+        };
+        self.stats.alloc(vertex_buffer_bytes(self.vertex_capacity));
+        self.stats
+            .alloc(self.index_capacity * std::mem::size_of::<u32>());
+        self.bindings = Some(bindings);
+        bindings
     }
 }
 
