@@ -120,7 +120,11 @@ async fn check() {
         hashes.push(fnv1a(&image.bytes));
         next_frame().await;
     }
+    #[cfg(not(target_arch = "wasm32"))]
     println!("capacity={} hashes={:016x?}", capacity(), hashes);
+    // println! goes nowhere on wasm32-unknown-unknown; log to the console.
+    #[cfg(target_arch = "wasm32")]
+    rayquad::logging::info!("capacity={} hashes={:016x?}", capacity(), hashes);
     miniquad::window::quit();
 }
 
