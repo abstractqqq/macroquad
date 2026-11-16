@@ -39,6 +39,105 @@ impl From<&Vertex> for PackedVertex {
 #[cfg(feature = "3d")]
 const _: () = assert!(std::mem::size_of::<PackedVertex>() == 40);
 
+/// Vertex layout uploaded to the GPU.
+#[cfg(feature = "3d")]
+type GpuVertex = PackedVertex;
+#[cfg(not(feature = "3d"))]
+type GpuVertex = Vertex;
+
+/// Batching statistics, used by `examples/drawcall_benchmark.rs`.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct DrawStats {
+    /// Bytes currently allocated in quad_gl's batching GPU buffers.
+    pub buffer_bytes: usize,
+    /// Highest `buffer_bytes` seen so far.
+    pub buffer_bytes_peak: usize,
+    /// Batching GPU buffers created so far.
+    pub buffers_created: usize,
+    /// Draw calls submitted by the last `draw()`.
+    pub draw_calls: usize,
+    /// Render passes begun by the last `draw()`.
+    pub passes: usize,
+    /// CPU time spent in the last `draw()`, in seconds.
+    pub submit_seconds: f64,
+    /// Latest available GPU time of a whole `draw()`, in nanoseconds.
+    /// Lags a few frames behind.
+    pub gpu_ns: Option<u64>,
+    /// Measure GPU time with `GL_TIME_ELAPSED` queries. Desktop GL only.
+    pub gpu_timing: bool,
+}
+
+impl DrawStats {
+    fn alloc(&mut self, bytes: usize) {
+        self.buffer_bytes += bytes;
+        self.buffer_bytes_peak = self.buffer_bytes_peak.max(self.buffer_bytes);
+        self.buffers_created += 1;
+    }
+
+    fn free(&mut self, bytes: usize) {
+        self.buffer_bytes -= bytes;
+    }
+}
+
+const GPU_QUERY_RING: usize = 4;
+
+/// Ring of `GL_TIME_ELAPSED` queries, read back `GPU_QUERY_RING` frames late
+/// so reading never stalls the pipeline.
+#[derive(Default)]
+struct GpuTimer {
+    queries: [u32; GPU_QUERY_RING],
+    frame: usize,
+}
+
+impl GpuTimer {
+    /// Starts this frame's query. Returns the result of the query that
+    /// previously used this slot, when available.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn begin(&mut self) -> Option<u64> {
+        use miniquad::gl::*;
+
+        let slot = self.frame % GPU_QUERY_RING;
+        let mut result = None;
+        unsafe {
+            if self.queries[slot] == 0 {
+                glGenQueries(1, &mut self.queries[slot]);
+            } else {
+                let mut available = 0;
+                glGetQueryObjectiv(
+                    self.queries[slot],
+                    GL_QUERY_RESULT_AVAILABLE,
+                    &mut available,
+                );
+                if available != 0 {
+                    let mut ns = 0;
+                    glGetQueryObjectui64v(self.queries[slot], GL_QUERY_RESULT, &mut ns);
+                    result = Some(ns);
+                }
+            }
+            glBeginQuery(GL_TIME_ELAPSED, self.queries[slot]);
+        }
+        result
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn end(&mut self) {
+        unsafe { miniquad::gl::glEndQuery(miniquad::gl::GL_TIME_ELAPSED) };
+        self.frame += 1;
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn begin(&mut self) -> Option<u64> {
+        None
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn end(&mut self) {}
+}
+
+const fn vertex_buffer_bytes(vertices: usize) -> usize {
+    vertices * std::mem::size_of::<GpuVertex>()
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DrawMode {
     Triangles,
@@ -639,6 +738,10 @@ pub struct QuadGl {
     pub batch_vertex_buffer: Vec<PackedVertex>,
     pub batch_index_buffer: Vec<u16>,
     pub batch_uniform_buffer: Vec<u8>,
+
+    pub stats: DrawStats,
+    gpu_timer: GpuTimer,
+    is_gl: bool,
 }
 
 impl QuadGl {
@@ -673,6 +776,10 @@ impl QuadGl {
             batch_uniform_buffer: Vec::new(),
             max_vertices,
             max_indices,
+
+            stats: DrawStats::default(),
+            gpu_timer: GpuTimer::default(),
+            is_gl: ctx.info().backend == Backend::OpenGl,
         }
     }
 
@@ -750,6 +857,16 @@ impl QuadGl {
     }
 
     pub fn draw(&mut self, ctx: &mut miniquad::Context, projection: glam::Mat4) {
+        let submit_start = miniquad::date::now();
+        let gpu_timing = self.stats.gpu_timing && self.is_gl;
+        if gpu_timing {
+            if let Some(ns) = self.gpu_timer.begin() {
+                self.stats.gpu_ns = Some(ns);
+            }
+        }
+        self.stats.draw_calls = self.draw_calls_count;
+        self.stats.passes = self.draw_calls_count;
+
         let white_texture = self.white_texture;
 
         for _ in 0..self.draw_calls.len() - self.draw_calls_bindings.len() {
@@ -774,6 +891,8 @@ impl QuadGl {
                 vertex_buffer,
                 index_buffer,
             };
+            self.stats.alloc(vertex_buffer_bytes(self.max_vertices));
+            self.stats.alloc(self.max_indices * std::mem::size_of::<u16>());
 
             self.draw_calls_bindings.push(bindings);
         }
@@ -880,6 +999,11 @@ impl QuadGl {
         self.batch_index_buffer.clear();
         self.batch_vertex_buffer.clear();
         self.batch_uniform_buffer.clear();
+
+        if gpu_timing {
+            self.gpu_timer.end();
+        }
+        self.stats.submit_seconds = miniquad::date::now() - submit_start;
     }
 
     pub fn get_projection_matrix(&self) -> glam::Mat4 {
@@ -1098,6 +1222,7 @@ impl QuadGl {
             draw_call.indices_start = 0;
             draw_call.vertices_start = 0;
         }
+        let old_bytes = self.stats.buffer_bytes;
         for binding in &mut self.draw_calls_bindings {
             ctx.delete_buffer(binding.index_buffer);
             ctx.delete_buffer(binding.vertex_buffer);
@@ -1122,6 +1247,11 @@ impl QuadGl {
                 vertex_buffer,
                 index_buffer,
             };
+        }
+        self.stats.free(old_bytes);
+        for _ in 0..self.draw_calls_bindings.len() {
+            self.stats.alloc(vertex_buffer_bytes(self.max_vertices));
+            self.stats.alloc(self.max_indices * std::mem::size_of::<u16>());
         }
     }
 }
