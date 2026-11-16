@@ -13,6 +13,7 @@ fn bake_assets() {
             characters: Font::ascii_character_list(),
             raster_size: 48,
             filter: miniquad::FilterMode::Linear,
+            ..Default::default()
         },
     )
     .expect("Failed to bake font from TTF");
