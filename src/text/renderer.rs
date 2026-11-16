@@ -2,12 +2,12 @@ use std::{ops::Range, sync::Arc};
 
 use crate::{
     color::Color,
-    math::{vec2, Rect},
+    math::{vec2, vec3},
     models::Vertex,
     quad_gl::{DrawMode, QuadGl},
 };
 
-use super::{line_break::can_break_between, Font, TextDimensions};
+use super::{font_atlas::AtlasRect, line_break::can_break_between, Font, TextDimensions};
 
 pub(crate) const BASE_FONT_SIZE: f32 = 32.0;
 
@@ -20,11 +20,22 @@ struct BreakCandidate {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PositionedGlyph {
-    pub rect: Rect,
+    pub rect: AtlasRect,
+    /// Top-left corner of the glyph quad in unscaled layout units. The glyph's
+    /// bearing (`left` / `top`) is already applied.
     pub x: f32,
     pub y: f32,
-    pub left: i16,
-    pub top: i16,
+}
+
+#[inline(always)]
+fn text_vertex(x: f32, y: f32, u: f32, v: f32, color: [u8; 4]) -> Vertex {
+    Vertex {
+        position: vec3(x, y, 0.0),
+        uv: vec2(u, v),
+        color,
+        #[cfg(feature = "3d")]
+        normal: crate::math::vec4(0.0, 0.0, 0.0, 0.0),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -133,9 +144,11 @@ impl TextRenderer {
                             baseline_y += line_height;
                             let shift_x = candidate.pen_x;
 
+                            // Every glyph after the candidate is on the line being wrapped,
+                            // so each moves down exactly one line.
                             for glyph in &mut glyphs[candidate.glyph_idx..] {
                                 glyph.x -= shift_x;
-                                glyph.y = baseline_y;
+                                glyph.y += line_height;
                             }
 
                             pen_x -= shift_x;
@@ -163,10 +176,8 @@ impl TextRenderer {
                 if let Some(rect) = metric.rect {
                     glyphs.push(PositionedGlyph {
                         rect,
-                        left: metric.left,
-                        top: metric.top,
-                        x: pen_x,
-                        y: baseline_y,
+                        x: pen_x + metric.left as f32,
+                        y: baseline_y - metric.top as f32,
                     });
                 }
                 pen_x += advance;
@@ -269,6 +280,8 @@ impl TextRenderer {
         let mut width = 0.0_f32;
         let mut line_count = 0usize;
 
+        let color: [u8; 4] = color.into();
+
         gl.texture(Some(&texture));
         gl.draw_mode(DrawMode::Triangles);
 
@@ -297,8 +310,8 @@ impl TextRenderer {
                     } else {
                         (x + logical_x, y + logical_y)
                     };
-                    let w = rect.w * layout_scale_x;
-                    let h = rect.h * layout_scale_y;
+                    let w = f32::from(rect.w) * layout_scale_x;
+                    let h = f32::from(rect.h) * layout_scale_y;
 
                     let p = if let Some((sin, cos)) = rotation {
                         [
@@ -315,17 +328,17 @@ impl TextRenderer {
                             vec2(dest_x, dest_y + h),
                         ]
                     };
-                    let sx = rect.x * inv_atlas_width;
-                    let sy = rect.y * inv_atlas_height;
-                    let sw = rect.w * inv_atlas_width;
-                    let sh = rect.h * inv_atlas_height;
+                    let sx = f32::from(rect.x) * inv_atlas_width;
+                    let sy = f32::from(rect.y) * inv_atlas_height;
+                    let sw = f32::from(rect.w) * inv_atlas_width;
+                    let sh = f32::from(rect.h) * inv_atlas_height;
 
                     let base_idx = self.batch_vertices.len() as u16;
                     self.batch_vertices.extend([
-                        Vertex::new(p[0].x, p[0].y, 0.0, sx, sy, color),
-                        Vertex::new(p[1].x, p[1].y, 0.0, sx + sw, sy, color),
-                        Vertex::new(p[2].x, p[2].y, 0.0, sx + sw, sy + sh, color),
-                        Vertex::new(p[3].x, p[3].y, 0.0, sx, sy + sh, color),
+                        text_vertex(p[0].x, p[0].y, sx, sy, color),
+                        text_vertex(p[1].x, p[1].y, sx + sw, sy, color),
+                        text_vertex(p[2].x, p[2].y, sx + sw, sy + sh, color),
+                        text_vertex(p[3].x, p[3].y, sx, sy + sh, color),
                     ]);
                     self.batch_indices.extend([
                         base_idx,
@@ -366,7 +379,7 @@ impl TextRenderer {
         scale_y: f32,
         rotation: f32,
         color: Color,
-        cluster_colors: Option<&[Option<Color>]>,
+        cluster_colors: Option<&[Option<[u8; 4]>]>,
         visible_clusters: usize,
         gl: &mut QuadGl,
     ) -> TextDimensions {
@@ -380,6 +393,7 @@ impl TextRenderer {
         let rotation = (rotation != 0.0).then(|| rotation.sin_cos());
         let inv_atlas_width = 1.0 / atlas_width;
         let inv_atlas_height = 1.0 / atlas_height;
+        let color: [u8; 4] = color.into();
 
         gl.texture(Some(&texture));
         gl.draw_mode(DrawMode::Triangles);
@@ -396,8 +410,8 @@ impl TextRenderer {
             let glyph_range = cluster.glyphs.start as usize..cluster.glyphs.end as usize;
             for glyph in &shaped.glyphs[glyph_range] {
                 let rect = glyph.rect;
-                let logical_x = glyph.x * layout_scale_x + glyph.left as f32 * layout_scale_x;
-                let logical_y = glyph.y * layout_scale_y - glyph.top as f32 * layout_scale_y;
+                let logical_x = glyph.x * layout_scale_x;
+                let logical_y = glyph.y * layout_scale_y;
                 let (dest_x, dest_y) = if let Some((sin, cos)) = rotation {
                     (
                         x + logical_x * cos - logical_y * sin,
@@ -406,8 +420,8 @@ impl TextRenderer {
                 } else {
                     (x + logical_x, y + logical_y)
                 };
-                let width = rect.w * layout_scale_x;
-                let height = rect.h * layout_scale_y;
+                let width = f32::from(rect.w) * layout_scale_x;
+                let height = f32::from(rect.h) * layout_scale_y;
                 let p = if let Some((sin, cos)) = rotation {
                     [
                         vec2(dest_x, dest_y),
@@ -426,17 +440,17 @@ impl TextRenderer {
                         vec2(dest_x, dest_y + height),
                     ]
                 };
-                let sx = rect.x * inv_atlas_width;
-                let sy = rect.y * inv_atlas_height;
-                let sw = rect.w * inv_atlas_width;
-                let sh = rect.h * inv_atlas_height;
+                let sx = f32::from(rect.x) * inv_atlas_width;
+                let sy = f32::from(rect.y) * inv_atlas_height;
+                let sw = f32::from(rect.w) * inv_atlas_width;
+                let sh = f32::from(rect.h) * inv_atlas_height;
 
                 let base_idx = self.batch_vertices.len() as u16;
                 self.batch_vertices.extend([
-                    Vertex::new(p[0].x, p[0].y, 0.0, sx, sy, cluster_color),
-                    Vertex::new(p[1].x, p[1].y, 0.0, sx + sw, sy, cluster_color),
-                    Vertex::new(p[2].x, p[2].y, 0.0, sx + sw, sy + sh, cluster_color),
-                    Vertex::new(p[3].x, p[3].y, 0.0, sx, sy + sh, cluster_color),
+                    text_vertex(p[0].x, p[0].y, sx, sy, cluster_color),
+                    text_vertex(p[1].x, p[1].y, sx + sw, sy, cluster_color),
+                    text_vertex(p[2].x, p[2].y, sx + sw, sy + sh, cluster_color),
+                    text_vertex(p[3].x, p[3].y, sx, sy + sh, cluster_color),
                 ]);
                 self.batch_indices.extend([
                     base_idx,

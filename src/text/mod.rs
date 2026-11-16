@@ -19,7 +19,7 @@ pub mod line_break;
 pub(crate) mod rasterizer;
 pub mod renderer;
 
-use self::font_atlas::FontAtlas;
+use self::font_atlas::{AtlasRect, FontAtlas};
 #[cfg(feature = "font-rasterize")]
 use self::{font_atlas::FontAtlasBuilder, rasterizer::Rasterizer};
 
@@ -32,7 +32,8 @@ pub struct TextDimensions {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlyphMetric {
-    pub rect: Option<crate::math::Rect>,
+    /// Atlas pixel rectangle. `None` for glyphs with no visible pixels (e.g. space).
+    pub rect: Option<AtlasRect>,
     pub left: i16,
     pub top: i16,
     pub advance: f32,
@@ -40,6 +41,8 @@ pub struct GlyphMetric {
 
 pub struct FontData {
     pub atlas: Option<FontAtlas>,
+    /// CPU copy of the atlas pixels, kept so the font can be re-exported with
+    /// [`Font::export_baked`]. Set by TTF loading; `None` for baked fonts.
     pub atlas_image: Option<Arc<crate::texture::Image>>,
     pub base_size: f32,
     pub ascent: f32,
@@ -100,10 +103,10 @@ impl FontData {
         bytes.extend_from_slice(&code.to_le_bytes());
         if let Some(rect) = metric.rect {
             bytes.push(1);
-            bytes.extend_from_slice(&rect.x.to_le_bytes());
-            bytes.extend_from_slice(&rect.y.to_le_bytes());
-            bytes.extend_from_slice(&rect.w.to_le_bytes());
-            bytes.extend_from_slice(&rect.h.to_le_bytes());
+            // The v1 format stores rect components as f32.
+            for component in [rect.x, rect.y, rect.w, rect.h] {
+                bytes.extend_from_slice(&f32::from(component).to_le_bytes());
+            }
         } else {
             bytes.push(0);
         }
@@ -145,12 +148,19 @@ impl FontData {
                 if offset + 16 > data.len() {
                     return Err(Error::FontError("Truncated font binary data"));
                 }
-                let rx = f32::from_le_bytes(data[offset..offset + 4].try_into().unwrap());
-                let ry = f32::from_le_bytes(data[offset + 4..offset + 8].try_into().unwrap());
-                let rw = f32::from_le_bytes(data[offset + 8..offset + 12].try_into().unwrap());
-                let rh = f32::from_le_bytes(data[offset + 12..offset + 16].try_into().unwrap());
+                let component = |index: usize| {
+                    let start = offset + index * 4;
+                    let value = f32::from_le_bytes(data[start..start + 4].try_into().unwrap());
+                    // Atlas rects are whole pixels inside a u16-sized texture.
+                    if value.fract() == 0.0 && (0.0..=f32::from(u16::MAX)).contains(&value) {
+                        Ok(value as u16)
+                    } else {
+                        Err(Error::FontError("Invalid glyph rectangle in font binary data"))
+                    }
+                };
+                let rect = AtlasRect::new(component(0)?, component(1)?, component(2)?, component(3)?);
                 offset += 16;
-                Some(crate::math::Rect::new(rx, ry, rw, rh))
+                Some(rect)
             } else {
                 None
             };
@@ -266,7 +276,7 @@ impl FontData {
             chars.push(' ');
         }
 
-        let mut rasterized_cache: foldhash::HashMap<u16, (Option<crate::math::Rect>, i16, i16)> =
+        let mut rasterized_cache: foldhash::HashMap<u16, (Option<AtlasRect>, i16, i16)> =
             foldhash::HashMap::default();
 
         for ch in chars {
@@ -313,7 +323,9 @@ impl FontData {
         Ok((
             Self {
                 atlas: None,
-                atlas_image: Some(Arc::new(image.clone())),
+                // The caller owns `image`; storing a clone here would double peak memory.
+                // `Font::load_from_bytes` moves the image in after uploading it.
+                atlas_image: None,
                 base_size,
                 ascent: font_metrics.ascent,
                 descent: font_metrics.descent,
@@ -337,6 +349,7 @@ impl Font {
         let (mut font_data, image) = FontData::bake_from_ttf_bytes(bytes, params)?;
         let atlas = FontAtlas::from_rgba8(image.width, image.height, &image.bytes, filter, ctx);
         font_data.atlas = Some(atlas);
+        font_data.atlas_image = Some(Arc::new(image));
         Ok(Self {
             data: Arc::new(font_data),
         })
@@ -415,7 +428,7 @@ impl Font {
             let rect = if ch == ' ' {
                 None
             } else {
-                Some(crate::math::Rect::new(0.0, 0.0, advance.max(1.0), font_metrics.ascent))
+                Some(AtlasRect::new(0, 0, advance.max(1.0) as u16, font_metrics.ascent as u16))
             };
             ascii_glyphs[(code - 32) as usize] = Some(GlyphMetric {
                 rect,
@@ -452,7 +465,15 @@ impl Font {
 
 #[cfg(test)]
 mod font_tests {
-    use super::Font;
+    use super::{AtlasRect, Font};
+
+    #[test]
+    fn glyph_structs_stay_compact() {
+        assert_eq!(std::mem::size_of::<super::GlyphMetric>(), 20);
+        assert_eq!(std::mem::size_of::<(char, super::GlyphMetric)>(), 24);
+        assert_eq!(std::mem::size_of::<super::renderer::PositionedGlyph>(), 16);
+        assert_eq!(std::mem::size_of::<Option<[u8; 4]>>(), 5);
+    }
 
     #[test]
     fn ascii_character_list_is_the_printable_ascii_repertoire() {
@@ -467,7 +488,7 @@ mod font_tests {
     fn binary_serialization_roundtrip() {
         let mut ascii_glyphs = [None; 96];
         ascii_glyphs[0] = Some(super::GlyphMetric {
-            rect: Some(crate::math::Rect::new(2.0, 4.0, 8.0, 12.0)),
+            rect: Some(AtlasRect::new(2, 4, 8, 12)),
             left: 1,
             top: 10,
             advance: 8.5,
@@ -476,7 +497,7 @@ mod font_tests {
         let extended = vec![(
             '中',
             super::GlyphMetric {
-                rect: Some(crate::math::Rect::new(10.0, 4.0, 16.0, 16.0)),
+                rect: Some(AtlasRect::new(10, 4, 16, 16)),
                 left: 0,
                 top: 14,
                 advance: 16.0,
@@ -610,7 +631,8 @@ pub struct TextLayout {
     /// Per-cluster color overrides. Empty (not one entry per cluster) when the layout was
     /// prepared without color spans; otherwise one entry per cluster. Use
     /// [`TextLayout::set_cluster_color`] to modify instead of indexing directly.
-    pub cluster_colors: Box<[Option<Color>]>,
+    /// Colors are stored in vertex format (RGBA8) so drawing does no per-vertex conversion.
+    pub cluster_colors: Box<[Option<[u8; 4]>]>,
     pub dimensions: TextDimensions,
     pub font_size: f32,
     pub scale_x: f32,
@@ -654,6 +676,7 @@ impl TextLayout {
         }
         let end = range.end.min(count);
         let start = range.start.min(end);
+        let color: [u8; 4] = color.into();
         for slot in &mut self.cluster_colors[start..end] {
             *slot = Some(color);
         }
@@ -691,7 +714,7 @@ pub fn prepare_text_layout(
                         span.range.start < cluster.source.end as usize
                             && (cluster.source.start as usize) < span.range.end
                     })
-                    .map(|span| span.color)
+                    .map(|span| span.color.into())
             })
             .collect::<Vec<_>>()
             .into_boxed_slice()
@@ -831,12 +854,10 @@ pub fn draw_text_ex(
         return TextDimensions::default();
     }
     let context = get_context();
-    let font = params
-        .font
-        .cloned()
-        .unwrap_or_else(|| context.fonts_storage.default_font.clone());
+    // Borrow instead of cloning: avoids an atomic Arc increment/decrement per call.
+    let font = params.font.unwrap_or(&context.fonts_storage.default_font);
     context.text_renderer.draw(
-        &font,
+        font,
         text,
         x,
         y,
@@ -856,11 +877,9 @@ pub fn measure_text(
     font_scale: f32,
 ) -> TextDimensions {
     let context = get_context();
-    let font = font
-        .cloned()
-        .unwrap_or_else(|| context.fonts_storage.default_font.clone());
+    let font = font.unwrap_or(&context.fonts_storage.default_font);
     context.text_renderer.measure(
-        &font,
+        font,
         text.as_ref(),
         font_size as f32,
         font_scale,
@@ -944,9 +963,8 @@ pub fn wrap_text(
     if !maximum_line_length.is_finite() || maximum_line_length <= 0.0 {
         return text.to_string();
     }
-    let font = font
-        .cloned()
-        .unwrap_or_else(|| get_context().fonts_storage.default_font.clone());
+    // Lazy: only touch the global context when no font was given.
+    let font = font.unwrap_or_else(|| &get_context().fonts_storage.default_font);
     let fallback = font.data.get_glyph('?');
     let scale = font_size as f32 / font.data.base_size * font_scale;
     let mut output = String::with_capacity(text.len() + text.len() / 20 + 8);
