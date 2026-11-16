@@ -87,6 +87,13 @@ function init_webgl(version) {
         if (gl.getExtension('WEBGL_depth_texture') == null) {
             alert("Cant initialize WEBGL_depth_texture extension");
         }
+
+        // 32-bit index buffers (gl.UNSIGNED_INT). Core in WebGL 2. Without it
+        // draws with u32 indices fail with INVALID_ENUM and draw nothing.
+        // https://developer.mozilla.org/en-US/docs/Web/API/OES_element_index_uint
+        if (gl.getExtension('OES_element_index_uint') == null) {
+            alert("Cant initialize OES_element_index_uint extension");
+        }
     } else {
         gl = canvas.getContext("webgl2");
     }
