@@ -499,6 +499,84 @@ mod streaming {
         assert!(buf.iter().all(|s| *s == 0.0), "stopped stream must be silent");
     }
 
+    /// Largest jump between consecutive frames of interleaved stereo.
+    fn max_step(samples: &[f32]) -> f32 {
+        samples
+            .windows(4)
+            .step_by(2)
+            .map(|w| (w[2] - w[0]).abs().max((w[3] - w[1]).abs()))
+            .fold(0.0, f32::max)
+    }
+
+    #[test]
+    fn seek_keeps_playing_and_is_click_free() {
+        let (builder, ctrl) = Mixer::new();
+        let mut mixer = builder.build();
+        let reference = load_samples_from_file(&fixture("stereo_44k.wav")).unwrap();
+        let source_step = max_step(&reference);
+
+        let (id, _) = ctrl.load_stream(source("stereo_44k.wav")).unwrap();
+        let pb = ctrl.play(id, PlaySoundParams { looped: true, volume: 1.0 });
+        prebuffer();
+        let mut out = render(&mut mixer, 4096);
+
+        // Render right after the seek, before the worker can have decoded the target:
+        // old audio must keep playing instead of dropping to silence.
+        ctrl.seek(pb.play_id, 44100);
+        let mut buf = vec![0.0f32; 256];
+        mixer.fill_audio_buffer(&mut buf, 128);
+        assert!(buf.iter().any(|s| s.abs() > 0.01), "silent gap right after seek");
+        out.extend_from_slice(&buf);
+        out.extend(render(&mut mixer, 20000));
+
+        // Each crossfade frame is a blend of two in-range signals, so the output never
+        // jumps much more than the source itself does.
+        let step = max_step(&out);
+        assert!(step <= source_step * 1.5 + 0.05, "click: step {step} vs source {source_step}");
+    }
+
+    #[test]
+    fn seek_past_end_fades_out_and_finishes() {
+        let (builder, ctrl) = Mixer::new();
+        let mut mixer = builder.build();
+        let (id, _) = ctrl.load_stream(source("stereo_44k.ogg")).unwrap();
+        let pb = ctrl.play(id, PlaySoundParams::default());
+        prebuffer();
+        let mut out = render(&mut mixer, 4096);
+        ctrl.seek(pb.play_id, 44100 * 2 * 3600);
+        out.extend(render(&mut mixer, 44100));
+        assert!(ctrl.play_error(pb.play_id).is_none());
+        assert!(out[out.len() - 1024..].iter().all(|s| *s == 0.0), "stream did not end");
+        let step = max_step(&out);
+        assert!(step < 0.5, "click on seek past end: step {step}");
+    }
+
+    #[test]
+    fn stream_errors_stay_bounded() {
+        let path = std::env::temp_dir().join(format!("rayquad_err_bound_{}.wav", std::process::id()));
+        std::fs::write(&path, fixture("stereo_44k.wav")).unwrap();
+        let (builder, ctrl) = Mixer::new();
+        let mut mixer = builder.build();
+        let (id, _) = ctrl.load_stream(StreamSource::File(path.clone())).unwrap();
+        std::fs::remove_file(&path).unwrap();
+
+        let mut buf = vec![0.0f32; 1024];
+        let mut plays = Vec::new();
+        for _ in 0..3 {
+            let pb = ctrl.play(id, PlaySoundParams::default());
+            let deadline = Instant::now() + Duration::from_secs(2);
+            while ctrl.play_error(pb.play_id).is_none() && Instant::now() < deadline {
+                mixer.fill_audio_buffer(&mut buf, 512);
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            plays.push(pb.play_id);
+        }
+        // Only the latest failing playback of a sound is remembered.
+        assert!(ctrl.play_error(plays[0]).is_none());
+        assert!(ctrl.play_error(plays[1]).is_none());
+        assert!(ctrl.play_error(plays[2]).is_some());
+    }
+
     #[test]
     fn pause_and_delete() {
         let (builder, ctrl) = Mixer::new();

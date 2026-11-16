@@ -98,15 +98,44 @@ impl SoundState {
     }
 }
 
+/// Memory released by the audio thread. Freeing it there (a stream's chunk buffers, or a
+/// whole decoded sound, which can be megabytes and end in `munmap`) would risk glitches, so
+/// it is handed to a reaper thread instead.
+enum Garbage {
+    Stream(Box<StreamState>),
+    Sound(Arc<[f32]>),
+}
+
+/// Slots of the preallocated garbage channel; only overflows (and frees inline) if the
+/// reaper thread is starved for a long time.
+const GARBAGE_SLOTS: usize = 64;
+
+/// Capacity reserved up front so pushing voices does not reallocate on the audio thread.
+const VOICE_CAPACITY: usize = 64;
+const STREAM_CAPACITY: usize = 16;
+
 pub struct Mixer {
     rx: mpsc::Receiver<AudioMessage>,
     sounds: Vec<Option<Arc<[f32]>>>,
     mixer_state: Vec<SoundState>,
-    streams: Vec<StreamState>,
+    streams: Vec<Box<StreamState>>,
+    garbage: Option<mpsc::SyncSender<Garbage>>,
 }
 
 pub struct MixerBuilder {
     rx: mpsc::Receiver<AudioMessage>,
+    garbage: Option<mpsc::SyncSender<Garbage>>,
+}
+
+/// Starts the reaper thread. It blocks on `recv` (no polling) and exits when the mixer is
+/// dropped. If it cannot be spawned, garbage is freed inline as before.
+fn spawn_reaper() -> Option<mpsc::SyncSender<Garbage>> {
+    let (tx, rx) = mpsc::sync_channel::<Garbage>(GARBAGE_SLOTS);
+    std::thread::Builder::new()
+        .name("rayquad-audio-reaper".to_string())
+        .spawn(move || while let Ok(garbage) = rx.recv() { drop(garbage) })
+        .ok()
+        .map(|_| tx)
 }
 
 pub struct MixerControl {
@@ -296,8 +325,9 @@ impl MixerBuilder {
         Mixer {
             rx: self.rx,
             sounds: Vec::new(),
-            mixer_state: vec![],
-            streams: vec![],
+            mixer_state: Vec::with_capacity(VOICE_CAPACITY),
+            streams: Vec::with_capacity(STREAM_CAPACITY),
+            garbage: self.garbage,
         }
     }
 }
@@ -307,7 +337,10 @@ impl Mixer {
         let (tx, rx) = mpsc::channel();
 
         (
-            MixerBuilder { rx },
+            MixerBuilder {
+                rx,
+                garbage: spawn_reaper(),
+            },
             MixerControl {
                 tx,
                 sound_id: AtomicU32::new(1),
@@ -322,7 +355,7 @@ impl Mixer {
         while let Ok(message) = self.rx.try_recv() {
             match message {
                 AudioMessage::PlayStream(stream) => {
-                    self.streams.push(*stream);
+                    self.streams.push(stream);
                 }
                 AudioMessage::AddSound(id, data) => {
                     let idx = (id.get() - 1) as usize;
@@ -348,7 +381,7 @@ impl Mixer {
                         self.mixer_state.swap_remove(i);
                     }
                     if let Some(i) = self.streams.iter().position(|s| s.play_id == play_id) {
-                        self.streams.swap_remove(i);
+                        self.remove_stream(i);
                     }
                 }
                 AudioMessage::StopAll(sound_id) => {
@@ -357,7 +390,7 @@ impl Mixer {
                             self.mixer_state.swap_remove(i);
                         }
                     }
-                    self.streams.retain(|s| s.sound_id != sound_id);
+                    self.remove_streams_of(sound_id);
                 }
                 AudioMessage::Pause(play_id) => {
                     if let Some(sound) = self.mixer_state.iter_mut().find(|s| s.play_id == play_id) {
@@ -434,10 +467,10 @@ impl Mixer {
                             self.mixer_state.swap_remove(i);
                         }
                     }
-                    self.streams.retain(|s| s.sound_id != sound_id);
+                    self.remove_streams_of(sound_id);
                     let idx = (sound_id.get() - 1) as usize;
-                    if let Some(slot) = self.sounds.get_mut(idx) {
-                        *slot = None;
+                    if let Some(data) = self.sounds.get_mut(idx).and_then(Option::take) {
+                        self.discard(Garbage::Sound(data));
                     }
                 }
             }
@@ -520,7 +553,31 @@ impl Mixer {
             if stream.paused || stream.mix(buffer) {
                 i += 1;
             } else {
-                self.streams.swap_remove(i);
+                self.remove_stream(i);
+            }
+        }
+    }
+
+    /// Hands memory to the reaper thread instead of freeing it on the audio thread.
+    fn discard(&self, garbage: Garbage) {
+        match &self.garbage {
+            // A full channel returns the garbage, which is then freed inline.
+            Some(tx) => {
+                let _ = tx.try_send(garbage);
+            }
+            None => drop(garbage),
+        }
+    }
+
+    fn remove_stream(&mut self, i: usize) {
+        let stream = self.streams.swap_remove(i);
+        self.discard(Garbage::Stream(stream));
+    }
+
+    fn remove_streams_of(&mut self, sound_id: NonZeroU32) {
+        for i in (0..self.streams.len()).rev() {
+            if self.streams[i].sound_id == sound_id {
+                self.remove_stream(i);
             }
         }
     }
