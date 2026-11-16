@@ -15,6 +15,12 @@ pub(crate) use qoi::decode_qoi_rgba8;
 
 const PNG_MAGIC: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
+/// Largest PNG accepted, in pixels: 64 MP, i.e. 256 MiB of RGBA8 (for example 8192x8192).
+///
+/// The header alone sets the output size, so without a cap a tiny file could claim
+/// 65535x65535 and make the decoder allocate about 16 GiB before reading any pixel data.
+pub const MAX_PNG_PIXELS: usize = 64 * 1024 * 1024;
+
 pub(crate) fn decode_png_rgba8(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), Error> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_ignore_text_chunk(true);
@@ -33,6 +39,11 @@ pub(crate) fn decode_png_rgba8(bytes: &[u8]) -> Result<(u16, u16, Vec<u8>), Erro
         .map_err(|_| Error::UnknownError("PNG image height exceeds 65535 pixels"))?;
 
     let pixel_count = width as usize * height as usize;
+    if pixel_count > MAX_PNG_PIXELS {
+        return Err(Error::UnknownError(
+            "PNG image exceeds MAX_PNG_PIXELS (64 megapixels)",
+        ));
+    }
     let output_size = reader
         .output_buffer_size()
         .ok_or(Error::UnknownError("PNG image is too large to decode"))?;
@@ -947,4 +958,65 @@ pub fn set_default_filter_mode(filter: FilterMode) {
     let context = get_context();
 
     context.default_filter_mode = filter;
+}
+
+#[cfg(test)]
+mod png_tests {
+    use super::*;
+
+    /// CRC-32 (ISO-HDLC), as used by PNG chunks.
+    fn crc32(data: &[u8]) -> u32 {
+        let mut crc = !0u32;
+        for &byte in data {
+            crc ^= byte as u32;
+            for _ in 0..8 {
+                crc = if crc & 1 != 0 { (crc >> 1) ^ 0xedb8_8320 } else { crc >> 1 };
+            }
+        }
+        !crc
+    }
+
+    fn chunk(out: &mut Vec<u8>, kind: &[u8; 4], data: &[u8]) {
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        let start = out.len();
+        out.extend_from_slice(kind);
+        out.extend_from_slice(data);
+        let crc = crc32(&out[start..]);
+        out.extend_from_slice(&crc.to_be_bytes());
+    }
+
+    /// A PNG header for an 8-bit RGBA image, followed by an empty IDAT and IEND.
+    fn png_header_only(width: u32, height: u32) -> Vec<u8> {
+        let mut png = PNG_MAGIC.to_vec();
+        let mut ihdr = Vec::new();
+        ihdr.extend_from_slice(&width.to_be_bytes());
+        ihdr.extend_from_slice(&height.to_be_bytes());
+        ihdr.extend_from_slice(&[8, 6, 0, 0, 0]); // depth 8, RGBA, deflate, adaptive, no interlace
+        chunk(&mut png, b"IHDR", &ihdr);
+        chunk(&mut png, b"IDAT", &[]);
+        chunk(&mut png, b"IEND", &[]);
+        png
+    }
+
+    #[test]
+    fn oversized_png_is_rejected_before_allocation() {
+        // 65535x65535 passes the u16 checks but would need about 16 GiB.
+        let err = decode_png_rgba8(&png_header_only(65535, 65535)).unwrap_err();
+        assert!(
+            matches!(err, Error::UnknownError(msg) if msg.contains("MAX_PNG_PIXELS")),
+            "{err:?}"
+        );
+        // One pixel over the cap.
+        assert!(decode_png_rgba8(&png_header_only(8192, 8193)).is_err());
+    }
+
+    #[test]
+    fn png_at_the_cap_passes_the_size_check() {
+        // 8192x8192 is exactly the cap; it must fail later (no pixel data), not on size.
+        let err = decode_png_rgba8(&png_header_only(8192, 8192)).unwrap_err();
+        assert!(
+            !matches!(err, Error::UnknownError(msg) if msg.contains("MAX_PNG_PIXELS")),
+            "{err:?}"
+        );
+    }
 }
